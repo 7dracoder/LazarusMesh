@@ -1,0 +1,20 @@
+{
+  "dataset": "Synthetic Rainfall Recovery Sample",
+  "version": 1,
+  "license": "CC0-1.0",
+  "description": "Harmless generated measurements used to demonstrate content-addressed recovery.",
+  "measurements": [
+    {"station":"SYN-001","month":"2026-01","millimeters":74.2},
+    {"station":"SYN-001","month":"2026-02","millimeters":62.7},
+    {"station":"SYN-001","month":"2026-03","millimeters":81.3},
+    {"station":"SYN-001","month":"2026-04","millimeters":95.8},
+    {"station":"SYN-002","month":"2026-01","millimeters":49.5},
+    {"station":"SYN-002","month":"2026-02","millimeters":57.1},
+    {"station":"SYN-002","month":"2026-03","millimeters":68.9},
+    {"station":"SYN-002","month":"2026-04","millimeters":73.6},
+    {"station":"SYN-003","month":"2026-01","millimeters":101.4},
+    {"station":"SYN-003","month":"2026-02","millimeters":88.2},
+    {"station":"SYN-003","month":"2026-03","millimeters":92.6},
+    {"station":"SYN-003","month":"2026-04","millimeters":109.1}
+  ]
+}

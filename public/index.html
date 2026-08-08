@@ -1,0 +1,552 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="Lazarus Mesh autonomous digital artifact recovery command center"
+    />
+    <meta name="color-scheme" content="dark light" />
+    <title>Lazarus Mesh | Recovery Command</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/styles.css" />
+    <script src="/app.js" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main-content">Skip to command center</a>
+
+    <div class="ambient ambient-one" aria-hidden="true"></div>
+    <div class="ambient ambient-two" aria-hidden="true"></div>
+
+    <div class="app-shell">
+      <header class="topbar">
+        <a class="brand" href="#main-content" aria-label="Lazarus Mesh home">
+          <span class="brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 40 40" role="img">
+              <path d="M20 4.4 33.5 12v16L20 35.6 6.5 28V12L20 4.4Z" />
+              <path d="m20 10-8.2 4.6v9.1l3.9 2.2v-6.2l4.3-2.4 4.3 2.4v6.2l3.9-2.2v-9.1L20 10Z" />
+              <circle cx="20" cy="28.2" r="2.1" />
+            </svg>
+          </span>
+          <span class="brand-copy">
+            <strong>LAZARUS</strong>
+            <span>MESH</span>
+          </span>
+        </a>
+
+        <div class="topbar-center" aria-label="System environment">
+          <span class="environment-pill" id="environment-pill">
+            <span class="pulse-dot" aria-hidden="true"></span>
+            <span id="environment-label">Local protocol sandbox</span>
+          </span>
+          <span class="topbar-divider" aria-hidden="true"></span>
+          <span class="network-label" id="network-label">Monad localnet</span>
+        </div>
+
+        <div class="topbar-actions">
+          <span
+            class="connection-chip"
+            id="connection-chip"
+            data-state="connecting"
+            role="status"
+            aria-live="polite"
+            aria-label="Application sync: connecting"
+          >
+            <span class="connection-dot" aria-hidden="true"></span>
+            <span id="connection-label">Syncing</span>
+          </span>
+          <button
+            class="icon-button"
+            id="theme-toggle"
+            type="button"
+            aria-label="Switch to light theme"
+            title="Change color theme"
+          >
+            <svg class="sun-icon" viewBox="0 0 24 24" aria-hidden="true">
+              <circle cx="12" cy="12" r="3.5"></circle>
+              <path d="M12 2v2M12 20v2M4.93 4.93l1.42 1.42M17.65 17.65l1.42 1.42M2 12h2M20 12h2M4.93 19.07l1.42-1.42M17.65 6.35l1.42-1.42"></path>
+            </svg>
+            <svg class="moon-icon" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M20.3 15.4A8.5 8.5 0 0 1 8.6 3.7 8.5 8.5 0 1 0 20.3 15.4Z"></path>
+            </svg>
+          </button>
+        </div>
+      </header>
+
+      <aside class="sidebar" aria-label="Mission navigation">
+        <div class="sidebar-section">
+          <div class="section-heading">
+            <span>Recovery missions</span>
+            <span class="count-badge" id="mission-count">0</span>
+          </div>
+          <div class="mission-list" id="mission-list" aria-live="polite">
+            <div class="mission-list-skeleton" aria-hidden="true">
+              <span></span><span></span><span></span>
+            </div>
+          </div>
+          <button class="new-mission-button" id="new-mission-button" type="button">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M12 5v14M5 12h14"></path>
+            </svg>
+            New recovery mission
+          </button>
+        </div>
+
+        <div class="sidebar-spacer"></div>
+
+        <section class="protocol-card" aria-labelledby="protocol-title">
+          <div class="protocol-card-head">
+            <span class="protocol-orbit" aria-hidden="true">
+              <span></span><span></span><span></span>
+            </span>
+            <div>
+              <p class="eyebrow">Protocol health</p>
+              <h2 id="protocol-title">All systems ready</h2>
+            </div>
+          </div>
+          <dl class="protocol-list" id="protocol-list">
+            <div><dt>Orchestrator</dt><dd><i></i>Ready</dd></div>
+            <div><dt>Payment rails</dt><dd><i></i>3 / 3</dd></div>
+            <div><dt>Verifier quorum</dt><dd><i></i>Online</dd></div>
+          </dl>
+        </section>
+
+        <p class="sidebar-footnote" id="runtime-footnote">
+          Loading runtime configuration…
+        </p>
+      </aside>
+
+      <main class="main-content" id="main-content" tabindex="-1">
+        <section
+          class="readiness-strip panel"
+          id="readiness-strip"
+          aria-labelledby="readiness-title"
+          aria-live="polite"
+        >
+          <div class="readiness-heading">
+            <div>
+              <p class="eyebrow">Deployment readiness</p>
+              <h2 id="readiness-title">Protocol execution</h2>
+            </div>
+            <p id="readiness-summary">Loading adapter capabilities…</p>
+          </div>
+          <div class="readiness-items" id="readiness-items" aria-label="Integration status">
+            <article class="readiness-item" data-tone="pending">
+              <span class="readiness-mark" aria-hidden="true"></span>
+              <div><strong>Rain</strong><span>Checking configuration</span></div>
+            </article>
+            <article class="readiness-item" data-tone="pending">
+              <span class="readiness-mark" aria-hidden="true"></span>
+              <div><strong>Monad</strong><span>Checking configuration</span></div>
+            </article>
+            <article class="readiness-item" data-tone="pending">
+              <span class="readiness-mark" aria-hidden="true"></span>
+              <div><strong>x402</strong><span>Checking configuration</span></div>
+            </article>
+          </div>
+        </section>
+
+        <section class="empty-state panel" id="empty-state" hidden>
+          <div class="empty-symbol" aria-hidden="true">
+            <span></span>
+          </div>
+          <p class="eyebrow">Recovery network idle</p>
+          <h1>Bring lost knowledge back online.</h1>
+          <p>
+            Create a mission from a known content root, grant a bounded budget, and
+            watch autonomous agents recover, verify, and reseed it.
+          </p>
+          <button class="primary-button" data-open-mission type="button">
+            Create your first mission
+          </button>
+        </section>
+
+        <div id="dashboard" hidden>
+          <section class="mission-header" aria-labelledby="mission-title">
+            <div class="mission-heading-wrap">
+              <div class="mission-kicker">
+                <span class="status-badge" id="mission-status">DEAD</span>
+                <span class="mission-id" id="mission-id">MISSION —</span>
+              </div>
+              <h1 id="mission-title">Loading recovery mission…</h1>
+              <div class="content-root-row">
+                <span>Content root</span>
+                <code id="content-root">—</code>
+                <button
+                  class="copy-button"
+                  id="copy-root"
+                  type="button"
+                  aria-label="Copy content root"
+                  title="Copy content root"
+                >
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <rect x="8" y="8" width="11" height="11" rx="2"></rect>
+                    <path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"></path>
+                  </svg>
+                </button>
+              </div>
+            </div>
+
+            <div class="mission-actions" aria-label="Mission controls">
+              <button class="secondary-button danger-ghost" id="blocked-purchase" type="button" aria-label="Test policy block" title="Test policy block">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M12 3 3.5 6v5.8c0 4.7 3.2 7.7 8.5 9.2 5.3-1.5 8.5-4.5 8.5-9.2V6L12 3Z"></path>
+                  <path d="m9 9 6 6M15 9l-6 6"></path>
+                </svg>
+                Test policy block
+              </button>
+              <button class="secondary-button" id="next-step" type="button">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="m9 6 6 6-6 6"></path>
+                </svg>
+                Next step
+              </button>
+              <button class="primary-button" id="run-demo" type="button">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="m8 5 11 7-11 7V5Z"></path>
+                </svg>
+                Run full recovery
+              </button>
+              <button class="icon-button" id="export-audit" type="button" aria-label="Export audit JSON" title="Export audit JSON">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M12 3v12"></path>
+                  <path d="m7 10 5 5 5-5"></path>
+                  <path d="M5 20h14"></path>
+                </svg>
+              </button>
+              <button class="icon-button reset-button" id="reset-demo" type="button" aria-label="Reset demo" title="Reset demo">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M20 11a8 8 0 1 0-2.34 5.66"></path>
+                  <path d="M20 4v7h-7"></path>
+                </svg>
+              </button>
+            </div>
+          </section>
+
+          <section class="lifecycle panel" aria-labelledby="lifecycle-heading">
+            <div class="panel-heading lifecycle-heading-row">
+              <div>
+                <p class="eyebrow">Autonomous mission lifecycle</p>
+                <h2 id="lifecycle-heading">Resurrection sequence</h2>
+              </div>
+              <span class="live-agent-chip">
+                <i aria-hidden="true"></i><span id="agent-state">Agent awaiting command</span>
+              </span>
+            </div>
+            <ol class="stage-track" id="stage-track">
+              <li data-stage="DEAD">
+                <div class="stage-node"><span>01</span></div>
+                <div class="stage-copy"><strong>Dead</strong><small>0 seeders</small></div>
+              </li>
+              <li data-stage="DISCOVERING">
+                <div class="stage-node"><span>02</span></div>
+                <div class="stage-copy"><strong>Discovering</strong><small>Agent scan</small></div>
+              </li>
+              <li data-stage="RECOVERING">
+                <div class="stage-node"><span>03</span></div>
+                <div class="stage-copy"><strong>Recovering</strong><small>Pieces return</small></div>
+              </li>
+              <li data-stage="VERIFIED">
+                <div class="stage-node"><span>04</span></div>
+                <div class="stage-copy"><strong>Verified</strong><small>Quorum proof</small></div>
+              </li>
+              <li data-stage="RESEEDED">
+                <div class="stage-node"><span>05</span></div>
+                <div class="stage-copy"><strong>Reseeded</strong><small>Mesh alive</small></div>
+              </li>
+            </ol>
+          </section>
+
+          <section class="metric-grid" aria-label="Mission summary">
+            <article class="metric-card panel">
+              <div class="metric-icon availability-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24"><path d="M4 18h2M9 14h2v4H9zM14 10h2v8h-2zM19 6h2v12h-2z"></path></svg>
+              </div>
+              <div>
+                <p>Availability</p>
+                <strong id="availability-value">0%</strong>
+              </div>
+              <div class="mini-progress"><span id="availability-bar"></span></div>
+            </article>
+            <article class="metric-card panel">
+              <div class="metric-icon pieces-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24"><rect x="4" y="4" width="6" height="6" rx="1"></rect><rect x="14" y="4" width="6" height="6" rx="1"></rect><rect x="4" y="14" width="6" height="6" rx="1"></rect><rect x="14" y="14" width="6" height="6" rx="1"></rect></svg>
+              </div>
+              <div>
+                <p>Verified pieces</p>
+                <strong id="pieces-value">0 / 0</strong>
+              </div>
+              <span class="metric-detail" id="pieces-detail">Awaiting recovery</span>
+            </article>
+            <article class="metric-card panel">
+              <div class="metric-icon seeders-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24"><circle cx="6" cy="12" r="2.5"></circle><circle cx="18" cy="6" r="2.5"></circle><circle cx="18" cy="18" r="2.5"></circle><path d="m8.2 10.8 7.6-3.6M8.2 13.2l7.6 3.6"></path></svg>
+              </div>
+              <div>
+                <p>Active seeders</p>
+                <strong id="seeders-value">0</strong>
+              </div>
+              <span class="metric-detail" id="seeders-detail">Artifact offline</span>
+            </article>
+            <article class="metric-card panel">
+              <div class="metric-icon budget-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="13" rx="3"></rect><path d="M16 11h5v4h-5a2 2 0 0 1 0-4ZM7 6V4h10v2"></path></svg>
+              </div>
+              <div>
+                <p>Budget remaining</p>
+                <strong id="budget-value">$0.00</strong>
+              </div>
+              <span class="metric-detail" id="budget-detail">$0.00 committed</span>
+            </article>
+          </section>
+
+          <div class="dashboard-grid">
+            <section class="piece-panel panel" aria-labelledby="piece-heading">
+              <div class="panel-heading panel-heading-split">
+                <div>
+                  <p class="eyebrow">Cryptographic reconstruction</p>
+                  <h2 id="piece-heading">Artifact piece map</h2>
+                </div>
+                <div class="piece-legend" aria-label="Piece states">
+                  <span><i class="missing"></i>Missing</span>
+                  <span><i class="recovered"></i>Recovered</span>
+                  <span><i class="verified"></i>Verified</span>
+                </div>
+              </div>
+              <div class="piece-map-frame">
+                <div
+                  class="piece-grid"
+                  id="piece-grid"
+                  role="img"
+                  aria-label="No pieces recovered"
+                ></div>
+                <div class="piece-map-glow" aria-hidden="true"></div>
+              </div>
+              <div class="piece-progress-row">
+                <div class="piece-progress-copy">
+                  <span id="piece-progress-label">0 of 0 pieces recovered</span>
+                  <strong id="piece-progress-percent">0%</strong>
+                </div>
+                <div
+                  class="progress-track"
+                  role="progressbar"
+                  aria-valuemin="0"
+                  aria-valuemax="100"
+                  aria-valuenow="0"
+                  id="piece-progress"
+                >
+                  <span id="piece-progress-bar"></span>
+                </div>
+              </div>
+            </section>
+
+            <section class="rail-panel panel" aria-labelledby="rails-heading">
+              <div class="panel-heading panel-heading-split">
+                <div>
+                  <p class="eyebrow">Agent treasury</p>
+                  <h2 id="rails-heading">Payment rails</h2>
+                </div>
+                <span class="policy-chip"><i aria-hidden="true"></i>Policy enforced</span>
+              </div>
+
+              <div class="rail-list">
+                <article class="rail-card rain-rail" id="rain-card">
+                  <div class="rail-logo rain-logo" aria-hidden="true">
+                    <svg viewBox="0 0 36 36"><path d="M7 28V11.5L18 5l11 6.5V28l-5.5 3.2V15L18 11.8 12.5 15v16.2L7 28Z"></path><path d="m12.5 18.2 5.5-3.3 5.5 3.3v6.5L18 28l-5.5-3.3v-6.5Z"></path></svg>
+                  </div>
+                  <div class="rail-main">
+                    <div class="rail-title-row"><strong>Rain</strong><span id="rain-state">Standby</span></div>
+                    <p id="rain-description">Scoped card for legacy archive access</p>
+                    <div class="rail-meta"><span id="rain-amount">$0.00 spent</span><code id="rain-reference">No receipt</code></div>
+                  </div>
+                </article>
+
+                <article class="rail-card monad-rail" id="monad-card">
+                  <div class="rail-logo monad-logo" aria-hidden="true">
+                    <svg viewBox="0 0 36 36"><path d="M18 4 31 18 18 32 5 18 18 4Z"></path><path d="M18 10.5 25 18l-7 7.5-7-7.5 7-7.5Z"></path></svg>
+                  </div>
+                  <div class="rail-main">
+                    <div class="rail-title-row"><strong>Monad</strong><span id="monad-state">Escrow ready</span></div>
+                    <p id="monad-description">Onchain bounty, collateral, and finality</p>
+                    <div class="rail-meta"><span id="monad-amount">$0.00 escrowed</span><code id="monad-reference">Localnet</code></div>
+                  </div>
+                </article>
+
+                <article class="rail-card x402-rail" id="x402-card">
+                  <div class="rail-logo x402-logo" aria-hidden="true"><span>402</span></div>
+                  <div class="rail-main">
+                    <div class="rail-title-row"><strong>x402</strong><span id="x402-state">Awaiting discovery</span></div>
+                    <p id="x402-description">Machine-native discovery micropayments</p>
+                    <div class="rail-meta"><span id="x402-amount">$0.00 settled</span><code id="x402-reference">No receipt</code></div>
+                  </div>
+                </article>
+              </div>
+            </section>
+
+            <section class="timeline-panel panel" aria-labelledby="timeline-heading">
+              <div class="panel-heading panel-heading-split">
+                <div>
+                  <p class="eyebrow">Live agent activity</p>
+                  <h2 id="timeline-heading">Recovery timeline</h2>
+                </div>
+                <span class="stream-indicator"><i aria-hidden="true"></i>Event stream</span>
+              </div>
+              <div class="timeline" id="timeline" aria-live="polite" aria-relevant="additions text">
+                <div class="timeline-empty">
+                  <span class="tiny-spinner" aria-hidden="true"></span>
+                  Connecting to the mission orchestrator…
+                </div>
+              </div>
+            </section>
+
+            <section class="audit-panel panel" aria-labelledby="audit-heading">
+              <div class="panel-heading panel-heading-split audit-heading-row">
+                <div>
+                  <p class="eyebrow">Trust, but verify</p>
+                  <h2 id="audit-heading">Audit & proofs</h2>
+                </div>
+                <div class="tab-list" role="tablist" aria-label="Audit details">
+                  <button id="audit-tab-receipts" role="tab" aria-selected="true" aria-controls="audit-content" data-audit-tab="receipts" type="button">Receipts</button>
+                  <button id="audit-tab-deal" role="tab" aria-selected="false" aria-controls="audit-content" data-audit-tab="deal" type="button">Deal</button>
+                  <button id="audit-tab-verifiers" role="tab" aria-selected="false" aria-controls="audit-content" data-audit-tab="verifiers" type="button">Verifiers</button>
+                  <button id="audit-tab-policy" role="tab" aria-selected="false" aria-controls="audit-content" data-audit-tab="policy" type="button">Policy</button>
+                </div>
+              </div>
+              <div class="audit-content" id="audit-content" role="tabpanel" aria-labelledby="audit-tab-receipts" tabindex="0"></div>
+            </section>
+          </div>
+
+          <footer class="app-footer">
+            <span id="footer-primary">Auditable recovery with bounded agent authority.</span>
+            <span id="footer-runtime">Loading execution environment…</span>
+          </footer>
+        </div>
+      </main>
+    </div>
+
+    <dialog class="mission-dialog" id="mission-dialog" aria-labelledby="dialog-title">
+      <form method="dialog" class="dialog-shell" id="mission-form" novalidate>
+        <div class="dialog-header">
+          <div>
+            <p class="eyebrow">New recovery mission</p>
+            <h2 id="dialog-title">Create a recovery mission</h2>
+          </div>
+          <button class="icon-button" type="button" id="close-dialog" aria-label="Close mission form">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"></path></svg>
+          </button>
+        </div>
+
+        <p class="dialog-intro">
+          Set a bounded funding envelope for authorized recovery. Every payment,
+          policy decision, and verification result is recorded in the mission audit.
+        </p>
+
+        <div class="form-alert" id="mission-form-error" role="alert" tabindex="-1" hidden>
+          <span class="form-alert-icon" aria-hidden="true">!</span>
+          <div>
+            <strong id="mission-form-error-title">Mission needs attention</strong>
+            <p id="mission-form-error-message"></p>
+          </div>
+        </div>
+
+        <div class="form-grid">
+          <label class="field field-wide">
+            <span>Artifact title</span>
+            <input
+              id="mission-title-input"
+              name="title"
+              type="text"
+              maxlength="100"
+              placeholder="Open Climate Archive — 2019"
+              aria-describedby="title-error"
+              required
+            />
+            <small class="field-error" id="title-error" hidden></small>
+          </label>
+          <label class="field field-wide">
+            <span>Verified fixture content root</span>
+            <input
+              id="content-root-input"
+              name="contentRoot"
+              type="text"
+              maxlength="128"
+              placeholder="Generated from the bundled CC0 fixture"
+              aria-describedby="content-root-help"
+              readonly
+            />
+            <small id="content-root-help">This build recovers the bundled CC0 manifest; its root is verified again after reconstruction.</small>
+          </label>
+          <label class="field">
+            <span>Manifest pieces</span>
+            <input id="piece-count-input" name="pieceCount" type="number" min="24" max="24" value="24" readonly required />
+          </label>
+          <label class="field">
+            <span>Rights basis</span>
+            <select id="license-input" name="license" required disabled aria-disabled="true">
+              <option value="CC0-1.0">CC0 / Public domain</option>
+              <option value="CC-BY-4.0">Creative Commons</option>
+              <option value="MIT">Open-source license</option>
+              <option value="OWNER_AUTHORIZED">Owner authorized</option>
+              <option value="ENTERPRISE_OWNED">Enterprise owned</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>Recovery service spend cap (USD)</span>
+            <div class="input-prefix"><span>$</span><input id="budget-input" name="budget" type="number" min="12.01" max="5000" step="0.01" value="20.00" aria-describedby="budget-help budget-error" required /></div>
+            <small id="budget-help">Allowed range: $12.01–$5,000.00 for Rain/x402 archive access, discovery, and fees.</small>
+            <small class="field-error" id="budget-error" hidden></small>
+          </label>
+          <label class="field">
+            <span>Recovery bounty (USD)</span>
+            <div class="input-prefix"><span>$</span><input id="reward-input" name="reward" type="number" min="1" max="1000" step="0.01" value="5.00" aria-describedby="reward-help reward-error" required /></div>
+            <small id="reward-help">Released through the configured Monad rail after verification.</small>
+            <small class="field-error" id="reward-error" hidden></small>
+          </label>
+        </div>
+
+        <section class="cost-preview" aria-labelledby="cost-preview-title">
+          <div class="cost-preview-heading">
+            <div>
+              <p class="eyebrow">Maximum exposure</p>
+              <h3 id="cost-preview-title">Mission funding envelope</h3>
+            </div>
+            <strong id="cost-total">$25.00</strong>
+          </div>
+          <dl class="cost-list">
+            <div><dt>Recovery bounty</dt><dd id="cost-reward">$5.00</dd></div>
+            <div><dt>Archive access, discovery &amp; fees reserve</dt><dd id="cost-reserve">Up to $20.00</dd></div>
+          </dl>
+          <p id="cost-note">Service spending and the Monad bounty are independently bounded. Unused service reserve remains unspent.</p>
+        </section>
+
+        <div class="policy-preview">
+          <span class="policy-preview-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><path d="M12 3 4 6v5.5c0 4.4 3 7.2 8 8.5 5-1.3 8-4.1 8-8.5V6l-8-3Z"></path><path d="m8.5 11.5 2.3 2.3 4.8-5"></path></svg>
+          </span>
+          <div><strong>Bounded agent authority</strong><span>Approved archives · Storage MCC · Single-use card · Automatic authority removal</span></div>
+        </div>
+
+        <label class="rights-check">
+          <input type="checkbox" id="rights-confirmed-input" name="rightsConfirmed" aria-describedby="rights-error" required />
+          <span>
+            <strong>I have the right to recover and reseed this artifact.</strong>
+            <small>No copyrighted entertainment, DRM circumvention, or prohibited data.</small>
+          </span>
+        </label>
+        <small class="field-error rights-error" id="rights-error" hidden></small>
+
+        <div class="dialog-actions">
+          <button class="secondary-button" type="button" id="cancel-dialog">Cancel</button>
+          <button class="primary-button" type="submit" id="create-mission-submit">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 4 6v5.5c0 4.4 3 7.2 8 8.5 5-1.3 8-4.1 8-8.5V6l-8-3Z"></path><path d="M12 8v7M8.5 11.5h7"></path></svg>
+            <span id="create-mission-label">Create secured mission</span>
+          </button>
+        </div>
+      </form>
+    </dialog>
+
+    <div class="toast-region" id="toast-region" aria-live="polite" aria-atomic="true"></div>
+    <div class="sr-only" id="screen-reader-status" aria-live="polite"></div>
+  </body>
+</html>
