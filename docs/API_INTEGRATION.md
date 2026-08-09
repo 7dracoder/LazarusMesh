@@ -2,30 +2,31 @@
 
 Updated: 2026-08-09
 
-This document describes the integration code that exists now. It separates mission accounting, deterministic demo behavior, Rain sandbox calls, the Privy payer, the protected x402 seller, and the still-local recovery bounty.
+This document describes the integration code that exists now. It separates mission accounting, authenticated remote merchant/provider traffic, deterministic demo behavior, Rain sandbox calls, the Privy payer, the protected x402 seller, and the still-local recovery bounty.
 
 Never put credential values, provider identifiers, wallet IDs, wallet addresses, seed phrases, or private keys in source control, browser code, API responses, screenshots, model input, or documentation. Rotate anything previously disclosed before using it again.
 
 ## Capability and deployment matrix
 
-`ADAPTER_MODE` chooses the Rain adapter. `MONAD_EXECUTION_MODE` independently chooses the x402 buyer.
+`ADAPTER_MODE` chooses the Rain adapter, `MONAD_EXECUTION_MODE` independently chooses the x402 buyer, and `MERCHANT_MODE` chooses local or remote merchant/provider behavior.
 
 | Component | Local selection | External selection | Exact boundary |
 | --- | --- | --- | --- |
-| Rain | `ADAPTER_MODE=local` | `ADAPTER_MODE=rain-sandbox` | The remote path calls Rain's hackathon sandbox, accepts USD mission accounting, and uses sandbox rUSD collateral. It is not a production card program. |
+| Rain | `ADAPTER_MODE=local` | `ADAPTER_MODE=rain-sandbox` (armed and verified; allowed on Vercel with an isolated state key) | The remote path calls Rain's hackathon sandbox, accepts USD mission accounting, and uses sandbox rUSD collateral. It is not a production card program. |
 | x402 buyer | `MONAD_EXECUTION_MODE=local` | `MONAD_EXECUTION_MODE=x402-testnet` | Local is x402-shaped simulation. Testnet mode can sign and settle the pinned test-USDC payment on Monad. |
 | x402 seller | Disabled by default | `X402_SELLER_ENABLED=true` | Enabled only with the protected testnet preview/local integration; it requires a durable settlement store. Public production disables it. |
 | Payer custody | None | Privy server wallet; raw private key is local-only fallback | Vercel live mode requires Privy and refuses `MONAD_PRIVATE_KEY`. |
 | Payee custody | None | Distinct receive-only address | No payee private key or seed phrase is required or stored. |
 | Monad bounty | `LocalMonadAdapter` | No external implementation | Bounty, collateral, attestations, and releases remain local in every mode. |
-| Merchant bargaining | `LocalNegotiationAdapter` | No external implementation | Structured deterministic bargaining; no merchant API or merchant-signed quote. |
-| Recovery/verifiers | Local fixture and scripted quorum | No external implementation | Real byte hashing/reconstruction; no remote provider, independent verifier, or seeding network. |
+| Merchant bargaining | `LocalNegotiationAdapter` | `RemoteNegotiationAdapter` | Remote mode uses an authenticated HTTPS API, pins an Ed25519 key, and verifies signed binding quotes. |
+| Recovery | 24-piece bundled fixture | `RemoteRecoveryAdapter` with eight-piece sponsor-pinned manifest | Remote HTTPS transfer and cryptographic verification are real; durable artifact storage/reseeding are not. |
+| Verifiers | Scripted local quorum | No external implementation | Independent verifier services remain future scope in every profile. |
 
 ### Vercel profiles
 
 | Profile | Buyer | Seller | Mutations |
 | --- | --- | --- | --- |
-| Public Production | Local | Disabled | Normal local-demo missions and reset; no payment or chain writes. |
+| Public Production | Local | Disabled | Local or remote merchant/provider missions; no payment or chain writes. |
 | Protected branch Preview | Privy-backed testnet buyer | Durable co-located seller | One fixed bundled mission; reset and arbitrary mission creation are disabled. |
 
 The preview must use Vercel Deployment Protection. Runtime host/branch checks are defense in depth, not authentication. The buyer uses an internal same-origin seller transport, so it does not bypass or depend on calling through Vercel's external protection challenge. The x402 HTTP route remains available behind the same deployment protection for protocol inspection.
@@ -51,6 +52,8 @@ Settlement assets are separate from accounting currencies:
 
 Rain sandbox rejects non-USD missions. Monad x402 may serve any supported accounting currency because the mission records a fixed-reference budget impact while the chain transfer remains test USDC. Selecting EUR, GBP, CAD, or AUD does not create a native payment in that currency.
 
+The remote merchant/provider accepts exactly one configured accounting currency at a time. The deployed service is currently USD. Core local mode continues to support all five accounting currencies.
+
 ## Environment variables actually read
 
 Use an ignored local `.env` or Vercel's encrypted environment-variable controls. Examples below contain names and constraints only.
@@ -60,7 +63,7 @@ Use an ignored local `.env` or Vercel's encrypted environment-variable controls.
 | Variable | Use |
 | --- | --- |
 | `PORT` | Loopback HTTP port; default `4173`. |
-| `ADAPTER_MODE` | `local` or `rain-sandbox`. Vercel supports only `local`. |
+| `ADAPTER_MODE` | `local` or `rain-sandbox`. Vercel accepts both; `rain-sandbox` additionally requires an explicit isolated `LAZARUS_STATE_KEY`. |
 | `RAIN_API_BASE_URL` | HTTPS Rain sandbox base URL. |
 | `RAIN_API_KEY` | Server-side Rain sandbox credential. |
 | `RAIN_USER_ID` | Provider-issued issuing-user UUID. |
@@ -69,7 +72,25 @@ Use an ignored local `.env` or Vercel's encrypted environment-variable controls.
 | `RAIN_AUTO_FUND_MINOR` | Sandbox rUSD collateral setup amount; default `0`. |
 | `RAIN_TIMEOUT_MS` | Bounded request timeout. |
 
-Rain activation is currently blocked. The prior API credential was disclosed and must be rotated, and the supplied collateral/contract value was not a valid UUID. Do not guess, trim, or mutate it. Keep `ADAPTER_MODE=local` until Rain supplies both a new key and a valid provider-issued UUID.
+### Remote merchant/provider
+
+The current remote counterpart is [https://lazarus-merchant.vercel.app](https://lazarus-merchant.vercel.app). Values belong only in ignored local configuration or encrypted Vercel server-side variables.
+
+| Variable | Use |
+| --- | --- |
+| `MERCHANT_MODE` | `local` or `remote`; remote settings are rejected unless explicitly selected. |
+| `LAZARUS_STATE_KEY` | Remote Vercel Production requires an explicit isolated `merchant-*` namespace. Local Production uses `primary`. |
+| `MERCHANT_BASE_URL` | HTTPS merchant/provider origin; loopback HTTP is allowed only for local development. |
+| `MERCHANT_API_TOKEN` | Shared server-to-server bearer credential; never exposed to the browser. |
+| `MERCHANT_EXPECTED_KEY_ID` | Sponsor-pinned Ed25519 public-key fingerprint. |
+| `MERCHANT_CURRENCY` | The one accounting currency accepted by this remote deployment. |
+| `MERCHANT_TRUSTED_MANIFEST_JSON` | Complete sponsor-pinned artifact manifest; not learned from the provider at runtime. |
+| `MERCHANT_TIMEOUT_MS` | Bounded merchant/provider request timeout. |
+| `MERCHANT_RESPONSE_LIMIT_BYTES` | Maximum JSON response size. |
+| `MERCHANT_MAXIMUM_PIECE_BYTES` | Maximum individual artifact piece size. |
+| `MERCHANT_MAXIMUM_TOTAL_BYTES` | Maximum aggregate artifact size. |
+
+Rain activation is complete. Authenticated health passes and the collateral/contract UUID was confirmed against the provider by control (real identifier `202`, unknown well-formed UUID `404`). Do not guess, trim, or mutate a provider identifier — verify it. Rotate any key that has been disclosed outside a secret manager.
 
 ### Monad/x402 common values
 
@@ -114,7 +135,7 @@ Privy configuration is all-or-nothing. Missing one of the four `PRIVY_*` payer v
 | `DATABASE_URL` | Required for the durable Neon settlement/replay store. |
 | `ALLOW_EXTERNAL_WRITES_ON_VERCEL` | Must be exactly `true` to arm the protected Preview; `false` in Production. |
 | `LIVE_PREVIEW_BRANCH` | Must exactly match Vercel's current Git branch metadata. |
-| `LAZARUS_STATE_KEY` | Production uses `primary`; live preview requires a unique `preview-*` key. |
+| `LAZARUS_STATE_KEY` | Local Production uses `primary`; remote Production requires a unique `merchant-*` key; live preview requires a unique `preview-*` key. |
 
 Vercel supplies deployment environment, target, branch, and host metadata. Live mode starts only when all of these invariants hold:
 
@@ -207,15 +228,17 @@ Rain receives amount, MCC, and expiry controls. Lazarus independently enforces e
 
 ## Merchant bargaining and binding quotes
 
-Rain, Privy, Monad, and x402 do not bargain. The current Atlas transcript is a deterministic in-process state machine: reference ask, buyer target, seller counter, and accepted quote.
+Rain, Privy, Monad, and x402 do not bargain. Local mode uses the deterministic Atlas state machine. Remote mode sends structured offers and counters to the independently deployed merchant API.
 
-The quote commits to merchant/provider identities, MCC, content root, purpose, mission accounting currency, amount, terms, session, issue time, and expiry. Its SHA-256 digest detects local mutation but is not a merchant signature. A future merchant adapter must authenticate and verify a signed quote while preserving the deterministic quote and payment policies.
+The remote quote commits to merchant/provider identities, MCC, content root, purpose, mission accounting currency, amount, terms, session, issue time, and expiry. Lazarus recomputes the canonical SHA-256 digest, pins the merchant's Ed25519 key fingerprint, and verifies the signature before applying its independent quote and payment policies.
+
+The verified USD acceptance run completed two counteroffer rounds and accepted a signed `$9.75` quote. Lazarus includes the proposed recovery bounty as non-settling context in the offer request, but the merchant currently does not persist it. Its console displays the negotiation/session and signature evidence, not bounty, provider-claim, wallet, or release state.
 
 ## Local Monad bounty and recovery
 
 `LocalMonadAdapter` remains the bounty adapter in every mode. Bounty creation, provider claim/collateral, verifier attestations, and 70/90/100 releases are deterministic local transitions with synthetic hashes. The Solidity file is a reference only and is not compiled, deployed, called, or audited by the app.
 
-Recovery reads the bundled CC0 fixture, verifies 24 piece hashes, reconstructs the file, validates the full commitment, and requires two scripted passing verifiers. The cryptographic work is real; networking and verifier independence are not.
+Local recovery reads the bundled CC0 fixture and verifies 24 pieces. Remote recovery first compares the live provider manifest with the complete sponsor-pinned copy, then bounds and verifies each downloaded piece, total size, reconstructed SHA-256, and root. The completed end-to-end run verified `8/8` remote pieces. Provider networking is real in that profile; verifier independence and persistent reseeding are not.
 
 ## HTTP routes
 
@@ -229,7 +252,7 @@ Recovery reads the bundled CC0 fixture, verifies 24 piece hashes, reconstructs t
 | `POST` | `/api/missions` | Fixture-backed mission creation; disabled in one-shot live preview. |
 | `POST` | `/api/missions/:id/step` | Execute the next mission step. |
 | `POST` | `/api/missions/:id/run` | Execute remaining steps. |
-| `GET/POST` | `/api/missions/:id/negotiation` | Read or execute local bargaining. |
+| `GET/POST` | `/api/missions/:id/negotiation` | Read or execute local or authenticated remote bargaining. |
 | `POST` | `/api/missions/:id/blocked-purchase` | Exercise an additional denied purchase. |
 | `GET` | `/api/missions/:id/export` | Download sanitized audit JSON. |
 
@@ -247,7 +270,7 @@ There are no browser proxy routes for Privy credentials, wallet signing, raw Rai
 8. Confirm `/api/health` reports testnet buyer and seller truthfully while bounty writes remain false.
 9. Run only the bundled mission once. Retain the payment ID, settlement response, transaction hash, confirmations, exact Transfer evidence, and explorer link.
 10. Reconcile any uncertain result before changing the state key or retrying.
-11. State that bargaining, archive payment, bounty, provider network, verifier network, and reseeding remain local.
+11. State the selected profile precisely: the x402 Preview keeps bargaining/provider local, while remote merchant Production keeps payments, bounty, verifier network, and reseeding local.
 
 Rain is a separate demo path. Do not enable it until the rotated key and valid provider UUID are available.
 
@@ -257,8 +280,8 @@ Rain is a separate demo path. Do not enable it until the rotated key and valid p
 - Replace snapshots with normalized operation attempts, receipts, idempotency, reconciliation jobs, and append-only events.
 - Complete Rain production onboarding, signed webhooks, cancellation, refunds, disputes, and transaction reconciliation.
 - Compile, test, fuzz, audit, deploy, and verify the Monad bounty contract and implement a dedicated writer.
-- Replace local merchant/provider/verifiers with authenticated services and signed statements.
+- Productionize the authenticated merchant/provider services and add independent verifier services and signed statements.
 - Define real FX, fees, disclosures, refunds, custody, accounting, and reconciliation before claiming production multi-currency support.
 - Add isolated recovery workers, content controls, durable artifact storage, and real reseeding evidence.
 
-Until then, the protected branch preview is a capped testnet demonstration, Rain remains an unarmed sandbox integration, and public production remains fully local-only.
+Until then, the protected branch preview is a capped testnet demonstration, Rain remains an unarmed sandbox integration, and public production may perform authenticated merchant/provider calls but no live payment, bounty, or chain write.

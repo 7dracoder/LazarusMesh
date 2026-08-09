@@ -1,6 +1,6 @@
 "use strict";
 
-const { createApplication } = require("../server");
+const { assertApplicationRequest, createApplication } = require("../server");
 const { MemoryStore } = require("../src/store");
 const { NeonStateStore, StateConflictError } = require("../src/neon-state");
 const { rehydrateLocalAdapters } = require("../src/rehydrate-local");
@@ -67,6 +67,18 @@ function createBufferedResponse(response) {
       response.end(chunks.length ? Buffer.concat(chunks) : undefined);
     },
   };
+}
+
+function adapterRehydrationScope(request) {
+  if (request.method !== "POST") return null;
+  const host = typeof request.headers?.host === "string" ? request.headers.host : "localhost";
+  const pathname = new URL(request.url || "/", `https://${host}`).pathname;
+  const match = pathname.match(/^\/api\/missions\/([^/]+)\/(step|run|blocked-purchase|negotiation)$/);
+  if (!match) return null;
+  return Object.freeze({
+    targetMissionId: decodeURIComponent(match[1]),
+    restoreTargetRecovery: match[2] === "step" || match[2] === "run",
+  });
 }
 
 function createRuntime() {
@@ -155,6 +167,9 @@ function sendDeploymentProblem(response, error) {
 module.exports = async function handler(request, response) {
   try {
     restoreRewrittenApiUrl(request);
+    // Reject invalid hosts/origins before constructing adapters, opening Neon,
+    // or re-fetching any authenticated merchant/provider state.
+    assertApplicationRequest(request, { allowRemoteHost: true });
     // Keep mutable adapters and mission state request-local. Vercel can run a
     // polling GET alongside a long POST in one warm process; sharing a runtime
     // would let the GET replace the POST's in-flight state.
@@ -165,7 +180,10 @@ module.exports = async function handler(request, response) {
     migrateStateForRuntime(snapshot.state, app.system);
     assertLivePreviewState(snapshot.state, app.deploymentPolicy);
     app.store.replace(snapshot.state);
-    await rehydrateLocalAdapters(app.store.get(), app.adapters);
+    const rehydrationScope = adapterRehydrationScope(request);
+    if (rehydrationScope) {
+      await rehydrateLocalAdapters(app.store.get(), app.adapters, rehydrationScope);
+    }
 
     const bufferedResponse = createBufferedResponse(response);
     await app.requestHandler(request, bufferedResponse);

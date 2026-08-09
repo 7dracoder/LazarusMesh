@@ -2,6 +2,23 @@
 
 const fs = require('node:fs');
 const { createPrivyServerWalletSigner } = require('./services/privy-signer');
+const { normalizeCurrency } = require('./domain/currency');
+const { normalizeTrustedManifest } = require('./services/recovery-remote');
+
+const MERCHANT_REMOTE_REQUIRED = Object.freeze([
+  'MERCHANT_BASE_URL',
+  'MERCHANT_API_TOKEN',
+  'MERCHANT_EXPECTED_KEY_ID',
+  'MERCHANT_CURRENCY',
+  'MERCHANT_TRUSTED_MANIFEST_JSON',
+]);
+
+const MERCHANT_REMOTE_OPTIONAL = Object.freeze([
+  'MERCHANT_TIMEOUT_MS',
+  'MERCHANT_RESPONSE_LIMIT_BYTES',
+  'MERCHANT_MAXIMUM_PIECE_BYTES',
+  'MERCHANT_MAXIMUM_TOTAL_BYTES',
+]);
 
 function unquote(value) {
   if (value.length >= 2) {
@@ -62,6 +79,110 @@ function rainSandboxConfig(env = process.env) {
     autoFundMinor: positiveInteger(env, 'RAIN_AUTO_FUND_MINOR', 0),
     timeoutMs: positiveInteger(env, 'RAIN_TIMEOUT_MS', 12_000),
   };
+}
+
+function merchantRemoteConfig(env = process.env) {
+  const mode = nonempty(env, 'MERCHANT_MODE') || 'local';
+  if (!['local', 'remote'].includes(mode)) {
+    throw new Error('MERCHANT_MODE must be exactly local or remote.');
+  }
+  const configuredNames = [...MERCHANT_REMOTE_REQUIRED, ...MERCHANT_REMOTE_OPTIONAL]
+    .filter((name) => nonempty(env, name));
+  if (mode === 'local') {
+    if (configuredNames.length) {
+      throw new Error('Remote merchant settings require MERCHANT_MODE=remote.');
+    }
+    return null;
+  }
+
+  const missing = MERCHANT_REMOTE_REQUIRED.filter((name) => !nonempty(env, name));
+  if (missing.length) {
+    throw new Error(`Remote merchant configuration is incomplete; missing ${missing.join(', ')}.`);
+  }
+  const baseUrl = normalizeRemoteMerchantUrl(nonempty(env, 'MERCHANT_BASE_URL'));
+  const expectedKeyId = nonempty(env, 'MERCHANT_EXPECTED_KEY_ID');
+  if (!/^merchant_ed25519_[a-f0-9]{64}$/.test(expectedKeyId)) {
+    throw new Error('MERCHANT_EXPECTED_KEY_ID must be a pinned Ed25519 fingerprint.');
+  }
+  const currency = normalizeCurrency(nonempty(env, 'MERCHANT_CURRENCY'), '');
+  if (!currency) throw new Error('MERCHANT_CURRENCY must be USD, EUR, GBP, CAD, or AUD.');
+
+  const timeoutMs = merchantPositiveInteger(env, 'MERCHANT_TIMEOUT_MS', 5_000, 30_000);
+  const responseLimitBytes = merchantPositiveInteger(
+    env,
+    'MERCHANT_RESPONSE_LIMIT_BYTES',
+    1_048_576,
+    1_048_576,
+  );
+  const maximumPieceBytes = merchantPositiveInteger(
+    env,
+    'MERCHANT_MAXIMUM_PIECE_BYTES',
+    1_048_576,
+    16 * 1_048_576,
+  );
+  const maximumTotalBytes = merchantPositiveInteger(
+    env,
+    'MERCHANT_MAXIMUM_TOTAL_BYTES',
+    32 * 1_048_576,
+    512 * 1_048_576,
+  );
+
+  const manifestJson = nonempty(env, 'MERCHANT_TRUSTED_MANIFEST_JSON');
+  if (Buffer.byteLength(manifestJson, 'utf8') > responseLimitBytes) {
+    throw new Error('MERCHANT_TRUSTED_MANIFEST_JSON exceeds MERCHANT_RESPONSE_LIMIT_BYTES.');
+  }
+  let manifest;
+  try {
+    manifest = JSON.parse(manifestJson);
+  } catch {
+    throw new Error('MERCHANT_TRUSTED_MANIFEST_JSON must contain valid JSON.');
+  }
+  const trustedManifest = normalizeTrustedManifest(manifest, {
+    maximumPieceBytes,
+    maximumTotalBytes,
+  });
+
+  return Object.freeze({
+    mode: 'remote',
+    baseUrl,
+    apiToken: nonempty(env, 'MERCHANT_API_TOKEN'),
+    expectedKeyId,
+    currency,
+    trustedManifest,
+    contentRoot: trustedManifest.merkleRootSha256,
+    timeoutMs,
+    responseLimitBytes,
+    maximumPieceBytes,
+    maximumTotalBytes,
+  });
+}
+
+function merchantPositiveInteger(env, name, fallback, maximum) {
+  const raw = nonempty(env, name);
+  if (raw === null) return fallback;
+  const value = Number(raw);
+  if (!Number.isSafeInteger(value) || value < 1 || value > maximum) {
+    throw new Error(`${name} must be a positive integer no greater than ${maximum}.`);
+  }
+  return value;
+}
+
+function normalizeRemoteMerchantUrl(value) {
+  let url;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new Error('MERCHANT_BASE_URL must be a valid URL.');
+  }
+  const loopback = ['127.0.0.1', 'localhost', '::1'].includes(url.hostname.toLowerCase());
+  if (url.protocol !== 'https:' && !(loopback && url.protocol === 'http:')) {
+    throw new Error('MERCHANT_BASE_URL must use HTTPS except on loopback.');
+  }
+  if (url.username || url.password || url.search || url.hash) {
+    throw new Error('MERCHANT_BASE_URL must not contain credentials, query, or fragment.');
+  }
+  url.pathname = `${url.pathname.replace(/\/+$/, '')}/`;
+  return url.href;
 }
 
 function monadReadiness(env = process.env) {
@@ -143,6 +264,7 @@ function monadX402Config(env = process.env) {
 
 module.exports = {
   loadEnvFile,
+  merchantRemoteConfig,
   monadNetworkConfig,
   monadReadiness,
   monadX402Config,

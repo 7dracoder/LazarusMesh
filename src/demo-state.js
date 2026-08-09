@@ -1,5 +1,6 @@
 const { randomUUID } = require("node:crypto");
 const { RATE_SET_ID, currencyInfo, fromAccountingMinorUp } = require("./domain/currency");
+const { STATE_SCHEMA_VERSION, createRuntimeBinding } = require("./state-migrations");
 
 const DEFAULT_MISSION_LIFETIME_MS = 60 * 60 * 1000;
 const LIVE_PREVIEW_MISSION_LIFETIME_MS = 30 * 24 * 60 * 60 * 1000;
@@ -29,6 +30,7 @@ function makeEvent({ source, title, description, status = "info", timestamp = ne
 
 function createMission({
   recovery,
+  negotiation,
   id = "mission_lazarus_demo",
   title = "Restore the CC0 Rainfall Dataset",
   rewardMinor = 500,
@@ -37,8 +39,18 @@ function createMission({
   currencyRateSet = RATE_SET_ID,
   lifetimeMs = DEFAULT_MISSION_LIFETIME_MS,
 } = {}) {
-  const manifest = recovery.buildManifest(24);
+  const manifest = recovery.buildManifest();
   recovery.start(id, manifest);
+  const liveMerchant = negotiation?.liveMerchantApi === true;
+  const networkedProvider = recovery?.networkedProviders === true;
+  const merchantProfile = negotiation?.merchant || {
+    merchantId: "merchant_atlas_archive",
+    merchantName: "Atlas Archive Cloud",
+  };
+  const providerProfile = recovery?.provider || {
+    providerId: "provider_atlas_archive",
+    providerName: "Atlas Archive Node",
+  };
   const currencyMetadata = currencyInfo(currency);
   if (!currencyMetadata) throw new Error("CURRENCY_NOT_SUPPORTED");
   const converted = (usdMinor) => fromAccountingMinorUp(usdMinor, currency);
@@ -62,7 +74,9 @@ function createMission({
   return {
     id,
     title,
-    objective: "Reconstruct a known CC0 fixture, verify every piece, and model two complete replicas.",
+    objective: networkedProvider
+      ? "Recover a pinned CC0 artifact from an authenticated provider, verify every piece, and model two complete replicas."
+      : "Reconstruct a known CC0 fixture, verify every piece, and model two complete replicas.",
     status: "DEAD",
     statusLabel: "Fixture unavailable — no modeled replica",
     availability: 0,
@@ -79,8 +93,8 @@ function createMission({
       externalEndpoint: false,
     },
     provider: {
-      id: "provider_atlas_archive",
-      name: "Atlas Archive Node",
+      id: providerProfile.providerId,
+      name: providerProfile.providerName,
       state: "unassigned",
       stakeMinor,
       stakeCurrency: currency,
@@ -92,9 +106,9 @@ function createMission({
         amountAtomic: null,
       },
       reputation: 92,
-      actorMode: "simulated",
-      connected: false,
-      externalEndpoint: false,
+      actorMode: networkedProvider ? "external" : "simulated",
+      connected: networkedProvider,
+      externalEndpoint: networkedProvider,
     },
     rightsEvidence: true,
     deadline: expiresAt,
@@ -127,9 +141,11 @@ function createMission({
     },
     policy: {
       rightsClass: "public_domain",
-      rightsEvidence: "fixtures/cc0-rainfall-dataset/LICENSE.md",
-      allowedMerchantIds: ["merchant_atlas_archive"],
-      allowedMerchants: ["merchant_atlas_archive"],
+      rightsEvidence: networkedProvider
+        ? `Pinned ${manifest.license} provider manifest`
+        : "fixtures/cc0-rainfall-dataset/LICENSE.md",
+      allowedMerchantIds: [merchantProfile.merchantId],
+      allowedMerchants: [merchantProfile.merchantId],
       allowedMccs: ["5734", "4816"],
       maximumTransactionMinor: converted(1200),
       perTransactionLimitMinor: converted(1200),
@@ -145,16 +161,16 @@ function createMission({
     },
     negotiation: {
       status: "not_started",
-      executionMode: "local-simulation",
-      merchantAuthenticated: false,
-      merchantSignedQuote: false,
+      executionMode: liveMerchant ? "external-merchant-api" : "local-simulation",
+      merchantAuthenticated: liveMerchant && negotiation?.merchantAuthenticated === true,
+      merchantSignedQuote: liveMerchant && negotiation?.merchantSignedQuotes === true,
       sessionId: null,
       targetAmountMinor: converted(900),
       maximumAmountMinor: converted(1200),
       initialAmountMinor: converted(1200),
       maximumRounds: 3,
       autoApprovalThresholdMinor: converted(1000),
-      allowedMerchantIds: ["merchant_atlas_archive"],
+      allowedMerchantIds: [merchantProfile.merchantId],
       allowedMccs: ["5734"],
       allowedCurrencies: [currency],
       requiredTerms: negotiationTerms,
@@ -183,9 +199,11 @@ function createMission({
     },
     events: [
       makeEvent({
-        source: "Local recovery fixture",
-        title: "Demo artifact marked unavailable",
-        description: "Manifest valid; the demo begins with zero modeled replicas. No peer network was scanned.",
+        source: networkedProvider ? "Pinned recovery provider" : "Local recovery fixture",
+        title: networkedProvider ? "Remote artifact marked unavailable" : "Demo artifact marked unavailable",
+        description: networkedProvider
+          ? "The sponsor-pinned manifest is valid; no bytes have been requested from the authenticated provider yet."
+          : "Manifest valid; the demo begins with zero modeled replicas. No peer network was scanned.",
         status: "warning",
       }),
     ],
@@ -194,23 +212,34 @@ function createMission({
 
 function createDefaultState(recovery, {
   system = {},
+  negotiation,
   missionLifetimeMs = DEFAULT_MISSION_LIFETIME_MS,
 } = {}) {
-  const mission = createMission({ recovery, lifetimeMs: missionLifetimeMs });
+  const remoteMissionId = negotiation?.liveMerchantApi === true
+    ? `mission_${randomUUID().replaceAll("-", "").slice(0, 16)}`
+    : undefined;
+  const mission = createMission({
+    recovery,
+    negotiation,
+    ...(remoteMissionId ? { id: remoteMissionId } : {}),
+    lifetimeMs: missionLifetimeMs,
+  });
+  const stateSystem = {
+    name: "Lazarus Mesh",
+    mode: "local",
+    rain: "local-adapter",
+    monad: "local-ledger",
+    x402: "local-handshake",
+    negotiation: "local-bargaining",
+    networkAccess: false,
+    startedAt: new Date().toISOString(),
+    ...system,
+  };
   return {
-    schemaVersion: 3,
+    schemaVersion: STATE_SCHEMA_VERSION,
+    runtimeBinding: createRuntimeBinding(stateSystem),
     activeMissionId: mission.id,
-    system: {
-      name: "Lazarus Mesh",
-      mode: "local",
-      rain: "local-adapter",
-      monad: "local-ledger",
-      x402: "local-handshake",
-      negotiation: "local-bargaining",
-      networkAccess: false,
-      startedAt: new Date().toISOString(),
-      ...system,
-    },
+    system: stateSystem,
     missions: [mission],
   };
 }

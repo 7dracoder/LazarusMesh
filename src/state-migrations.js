@@ -2,11 +2,139 @@
 
 const { currencyInfo, normalizeCurrency } = require("./domain/currency");
 
-const STATE_SCHEMA_VERSION = 3;
+const STATE_SCHEMA_VERSION = 4;
+const RUNTIME_BINDING_VERSION = 1;
 const MONAD_USDC_TESTNET = "0x534b2f3A21130d7a60830c2Df862319e593943A3";
 
 function object(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+}
+
+function persistedBindingError(message) {
+  const error = new Error(message);
+  error.code = "PERSISTED_STATE_RUNTIME_BINDING_MISMATCH";
+  return error;
+}
+
+function createRuntimeBinding(system) {
+  const value = object(system);
+  return {
+    version: RUNTIME_BINDING_VERSION,
+    merchantMode: value.negotiation?.liveMerchantApi === true ? "remote" : "local",
+    recoveryMode: value.recovery?.networkedProviders === true ? "remote" : "local",
+    contentRoot: typeof value.missionCreation?.contentRoot === "string"
+      ? value.missionCreation.contentRoot
+      : null,
+    merchantId: typeof value.actors?.merchant?.id === "string" ? value.actors.merchant.id : null,
+    providerId: typeof value.actors?.provider?.id === "string" ? value.actors.provider.id : null,
+  };
+}
+
+function oneMode(signals, label) {
+  const modes = [...new Set(signals.filter(Boolean))];
+  if (modes.length > 1) {
+    throw persistedBindingError(`Stored state contains conflicting ${label} runtime markers.`);
+  }
+  return modes[0] || null;
+}
+
+function inferredStoredBinding(state) {
+  const system = object(state.system);
+  const missions = Array.isArray(state.missions) ? state.missions : [];
+  const merchantSignals = [];
+  const recoverySignals = [];
+  if (typeof system.negotiation?.liveMerchantApi === "boolean") {
+    merchantSignals.push(system.negotiation.liveMerchantApi ? "remote" : "local");
+  }
+  if (typeof system.recovery?.networkedProviders === "boolean") {
+    recoverySignals.push(system.recovery.networkedProviders ? "remote" : "local");
+  }
+  for (const mission of missions) {
+    if (mission?.negotiation?.executionMode === "external-merchant-api") merchantSignals.push("remote");
+    if (mission?.negotiation?.executionMode === "local-simulation") merchantSignals.push("local");
+    if (mission?.provider?.actorMode === "external" || mission?.provider?.externalEndpoint === true) {
+      recoverySignals.push("remote");
+    }
+    if (mission?.provider?.actorMode === "simulated" || mission?.provider?.externalEndpoint === false) {
+      recoverySignals.push("local");
+    }
+  }
+  return {
+    version: 0,
+    merchantMode: oneMode(merchantSignals, "merchant"),
+    recoveryMode: oneMode(recoverySignals, "recovery"),
+    contentRoot: null,
+    merchantId: null,
+    providerId: null,
+  };
+}
+
+function storedBinding(state) {
+  if (state.runtimeBinding === undefined) {
+    if (Number.isSafeInteger(state.schemaVersion) && state.schemaVersion >= STATE_SCHEMA_VERSION) {
+      throw persistedBindingError("Stored state is missing its runtime binding marker.");
+    }
+    return inferredStoredBinding(state);
+  }
+  const binding = object(state.runtimeBinding);
+  if (
+    binding.version !== RUNTIME_BINDING_VERSION
+    || !["local", "remote"].includes(binding.merchantMode)
+    || !["local", "remote"].includes(binding.recoveryMode)
+  ) {
+    throw persistedBindingError("Stored state has an invalid runtime binding marker.");
+  }
+  return {
+    version: binding.version,
+    merchantMode: binding.merchantMode,
+    recoveryMode: binding.recoveryMode,
+    contentRoot: typeof binding.contentRoot === "string" ? binding.contentRoot : null,
+    merchantId: typeof binding.merchantId === "string" ? binding.merchantId : null,
+    providerId: typeof binding.providerId === "string" ? binding.providerId : null,
+  };
+}
+
+function assertIdentity(actual, expected, label, { required = false } = {}) {
+  if (expected === null) return;
+  if ((required && typeof actual !== "string") || (typeof actual === "string" && actual !== expected)) {
+    throw persistedBindingError(`Stored state ${label} does not match the configured runtime.`);
+  }
+}
+
+function assertStateRuntimeBinding(state, system) {
+  const expected = createRuntimeBinding(system);
+  const stored = storedBinding(state);
+  for (const field of ["merchantMode", "recoveryMode"]) {
+    if (stored[field] !== null && stored[field] !== expected[field]) {
+      throw persistedBindingError(`Stored state ${field} does not match the configured runtime.`);
+    }
+    if (expected[field] === "remote" && stored[field] === null) {
+      throw persistedBindingError(`Remote ${field} cannot adopt state without an explicit remote marker.`);
+    }
+  }
+  assertIdentity(stored.contentRoot, expected.contentRoot, "content root");
+  assertIdentity(stored.merchantId, expected.merchantId, "merchant identity");
+  assertIdentity(stored.providerId, expected.providerId, "provider identity");
+
+  const remote = expected.merchantMode === "remote" || expected.recoveryMode === "remote";
+  for (const mission of Array.isArray(state.missions) ? state.missions : []) {
+    assertIdentity(mission?.contentRoot, expected.contentRoot, "mission content root", { required: remote });
+    assertIdentity(mission?.manifest?.contentRoot, expected.contentRoot, "mission manifest root", { required: remote });
+    assertIdentity(mission?.provider?.id, expected.providerId, "mission provider", {
+      required: expected.recoveryMode === "remote",
+    });
+    if (expected.merchantId !== null) {
+      const allowed = mission?.negotiation?.allowedMerchantIds;
+      if (
+        (expected.merchantMode === "remote" && !Array.isArray(allowed))
+        || (Array.isArray(allowed) && !allowed.includes(expected.merchantId))
+      ) {
+        throw persistedBindingError("Stored mission merchant identity does not match the configured runtime.");
+      }
+    }
+  }
+  state.runtimeBinding = expected;
+  return expected;
 }
 
 function localPaymentRecord(record) {
@@ -83,7 +211,7 @@ function rewriteLegacyEvent(event, mission) {
 
 function migrateMission(mission, system, sourceSchemaVersion) {
   if (!mission || typeof mission !== "object") return mission;
-  const merchantLive = system.negotiation?.ready === true;
+  const merchantLive = system.negotiation?.liveMerchantApi === true;
   const providerLive = system.recovery?.networkedProviders === true;
   const verifiersLive = system.actors?.verifiers?.connected === true;
   const budgetCurrency = normalizeCurrency(mission.budget?.currency || "USD", "");
@@ -286,6 +414,7 @@ function migrateMission(mission, system, sourceSchemaVersion) {
 
 function migrateStateForRuntime(state, runtimeSystem = {}) {
   if (!state || typeof state !== "object") return state;
+  assertStateRuntimeBinding(state, runtimeSystem);
   state.system = { ...object(state.system), ...object(runtimeSystem) };
   const version = Number.isSafeInteger(state.schemaVersion) ? state.schemaVersion : 1;
   for (const mission of Array.isArray(state.missions) ? state.missions : []) {
@@ -297,7 +426,10 @@ function migrateStateForRuntime(state, runtimeSystem = {}) {
 
 module.exports = {
   STATE_SCHEMA_VERSION,
+  RUNTIME_BINDING_VERSION,
   // Backwards-compatible export for callers from the earlier actor-boundary migration.
   ACTOR_TRANSPARENCY_SCHEMA_VERSION: STATE_SCHEMA_VERSION,
+  assertStateRuntimeBinding,
+  createRuntimeBinding,
   migrateStateForRuntime,
 };

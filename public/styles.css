@@ -2232,6 +2232,17 @@ html[data-theme="light"] .moon-icon {
   white-space: nowrap;
 }
 
+.deal-meta a {
+  color: var(--accent);
+  text-decoration-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  text-underline-offset: 2px;
+}
+
+.deal-meta a:hover {
+  color: var(--accent-strong);
+  text-decoration-color: currentColor;
+}
+
 .deal-section {
   padding: 10px;
 }

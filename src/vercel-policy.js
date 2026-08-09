@@ -2,6 +2,8 @@
 
 const LIVE_MODE = "x402-testnet";
 const LOCAL_MODE = "local";
+const RAIN_SANDBOX_MODE = "rain-sandbox";
+const SUPPORTED_ADAPTER_MODES = Object.freeze([LOCAL_MODE, RAIN_SANDBOX_MODE]);
 const DEFAULT_STATE_KEY = "primary";
 const DEMO_MISSION_ID = "mission_lazarus_demo";
 
@@ -58,17 +60,40 @@ function hostname(value, name) {
 
 function vercelRuntimePolicy(env = process.env) {
   const adapterMode = nonempty(env, "ADAPTER_MODE") || LOCAL_MODE;
-  if (adapterMode !== LOCAL_MODE) {
-    throw configurationError("Vercel supports ADAPTER_MODE=local only; Rain sandbox credentials stay off deployed runtimes.");
+  if (!SUPPORTED_ADAPTER_MODES.includes(adapterMode)) {
+    throw configurationError("ADAPTER_MODE must be exactly local or rain-sandbox on Vercel.");
   }
 
   const monadExecutionMode = nonempty(env, "MONAD_EXECUTION_MODE") || LOCAL_MODE;
   if (![LOCAL_MODE, LIVE_MODE].includes(monadExecutionMode)) {
     throw configurationError("MONAD_EXECUTION_MODE is unsupported on Vercel.");
   }
+  const merchantMode = nonempty(env, "MERCHANT_MODE") || LOCAL_MODE;
+  if (![LOCAL_MODE, "remote"].includes(merchantMode)) {
+    throw configurationError("MERCHANT_MODE is unsupported on Vercel.");
+  }
 
   const sellerEnabled = strictBoolean(env, "X402_SELLER_ENABLED", false);
   const key = stateKey(env);
+  if (
+    merchantMode === "remote"
+    && (
+      nonempty(env, "LAZARUS_STATE_KEY") === null
+      || key === DEFAULT_STATE_KEY
+      || !key.startsWith("merchant-")
+    )
+  ) {
+    throw configurationError("Remote merchant deployments require an isolated merchant-* LAZARUS_STATE_KEY.");
+  }
+  // A rain-sandbox runtime must never adopt a snapshot written by a local-mode
+  // deployment: rehydration would reject the stored local card, and a shared key
+  // could otherwise resurrect card authority under the wrong adapter.
+  if (
+    adapterMode === RAIN_SANDBOX_MODE
+    && (nonempty(env, "LAZARUS_STATE_KEY") === null || key === DEFAULT_STATE_KEY)
+  ) {
+    throw configurationError("Rain sandbox deployments require an explicit isolated LAZARUS_STATE_KEY.");
+  }
   if (monadExecutionMode === LOCAL_MODE) {
     if (sellerEnabled) {
       throw configurationError("The x402 seller may run only with the armed buyer in a protected live Preview.");
@@ -76,6 +101,7 @@ function vercelRuntimePolicy(env = process.env) {
     return Object.freeze({
       adapterMode,
       monadExecutionMode,
+      merchantMode,
       liveBuyerEnabled: false,
       livePreviewOneShot: false,
       sellerEnabled,
@@ -86,6 +112,9 @@ function vercelRuntimePolicy(env = process.env) {
 
   if (nonempty(env, "VERCEL") !== "1") {
     throw configurationError("Live Monad execution is allowed only inside Vercel's protected preview runtime.");
+  }
+  if (merchantMode !== LOCAL_MODE) {
+    throw configurationError("The one-shot live x402 Preview must keep merchant negotiation and recovery on the pinned local fixture.");
   }
   if (nonempty(env, "VERCEL_ENV") !== "preview" || nonempty(env, "VERCEL_TARGET_ENV") !== "preview") {
     throw configurationError("Live Monad execution is never allowed in production or development deployments.");
@@ -138,6 +167,7 @@ function vercelRuntimePolicy(env = process.env) {
   return Object.freeze({
     adapterMode,
     monadExecutionMode,
+    merchantMode,
     liveBuyerEnabled: true,
     livePreviewOneShot: true,
     sellerEnabled,
@@ -193,6 +223,7 @@ function assertLivePreviewState(state, policy) {
 module.exports = {
   DEFAULT_STATE_KEY,
   DEMO_MISSION_ID,
+  SUPPORTED_ADAPTER_MODES,
   VercelPolicyError,
   assertLivePreviewRequest,
   assertLivePreviewState,

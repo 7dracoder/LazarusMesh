@@ -6,8 +6,10 @@ const DISCOVERY_USD_MINOR = 1;
 const DISCOVERY_USDC_ATOMIC = "10000";
 
 class LocalX402Adapter {
-  constructor({ clock = () => new Date() } = {}) {
+  constructor({ clock = () => new Date(), providerId = "provider_atlas_archive" } = {}) {
+    if (typeof providerId !== "string" || !providerId.trim()) throw new Error("INVALID_PROVIDER_ID");
     this.clock = clock;
+    this.providerId = providerId.trim();
     this.mode = "local";
     this.receipts = new Map();
   }
@@ -79,7 +81,7 @@ class LocalX402Adapter {
       timestamp,
       paymentResponse: {
         candidateProviders: 1,
-        recommendedProvider: "provider_atlas_archive",
+        recommendedProvider: this.providerId,
         estimatedRecoverySeconds: 45,
         estimatedCostMinor: fromAccountingMinorUp(1200, currency),
         estimatedCostCurrency: currency,

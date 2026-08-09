@@ -636,8 +636,13 @@ class RainSandboxAdapter {
       throw new RainSandboxError('RAIN_INVALID_RESTORED_CARD', 'Stored Rain card state is invalid.', { statusCode: 500 });
     }
     const expiry = new Date(card.expiresAt);
-    if (!Number.isFinite(expiry.getTime()) || expiry.getTime() <= this.clock().getTime()) {
-      throw new RainSandboxError('RAIN_INVALID_RESTORED_CARD', 'Stored Rain card expiry must be in the future.', { statusCode: 500 });
+    // An already-expired card is still restored. It carries no authority —
+    // cardDecision() independently returns CARD_EXPIRED for any authorization —
+    // but a serverless request must still be able to rehydrate a part-finished
+    // mission and retire the card at completion. Only an unparseable expiry,
+    // which we cannot prove has passed, fails closed.
+    if (!Number.isFinite(expiry.getTime())) {
+      throw new RainSandboxError('RAIN_INVALID_RESTORED_CARD', 'Stored Rain card expiry is invalid.', { statusCode: 500 });
     }
     if (
       !Number.isSafeInteger(card.transactionCount) ||

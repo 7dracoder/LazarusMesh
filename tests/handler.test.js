@@ -5,6 +5,7 @@ const assert = require("node:assert/strict");
 const { createHash } = require("node:crypto");
 const { Readable } = require("node:stream");
 const { createApplication } = require("../server");
+const deploymentHandler = require("../api/index");
 const { MemoryStore } = require("../src/store");
 
 class BufferedResponse {
@@ -44,6 +45,7 @@ async function request(handler, {
   url = "/api/state",
   body,
   host = "app.example",
+  headers = {},
 } = {}) {
   const payload = body === undefined ? [] : [Buffer.from(JSON.stringify(body))];
   const incoming = Readable.from(payload);
@@ -56,11 +58,25 @@ async function request(handler, {
       "content-type": "application/json",
       "sec-fetch-site": "same-origin",
     } : {}),
+    ...headers,
   };
   const response = new BufferedResponse();
   await Promise.all([handler(incoming, response), response.done]);
   return response;
 }
+
+test("serverless handler rejects cross-site mutations before runtime or adapter initialization", async () => {
+  const response = await request(deploymentHandler, {
+    method: "POST",
+    url: "/api/index?__lazarus_path=missions/mission_cross_site/run",
+    headers: {
+      origin: "https://attacker.example",
+      "sec-fetch-site": "cross-site",
+    },
+  });
+  assert.equal(response.statusCode, 403);
+  assert.match(response.json().message, /cross-site mutation blocked/i);
+});
 
 test("request handler completes a multi-currency mission without opening a socket", async () => {
   const store = new MemoryStore(() => ({ missions: [] }));

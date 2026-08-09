@@ -3,6 +3,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const { rehydrateLocalAdapters } = require("../src/rehydrate-local");
+const { RemoteNegotiationAdapter } = require("../src/services/negotiation-remote");
 const {
   DEFAULT_CONFIRMATIONS,
   MONAD_TESTNET_CHAIN_ID,
@@ -26,7 +27,7 @@ function mission(overrides = {}) {
     id: MISSION_ID,
     contentRoot: CONTENT_ROOT,
     stepIndex: 1,
-    manifest: { totalPieces: 24 },
+    manifest: { totalPieces: 24, contentRoot: CONTENT_ROOT },
     pieces: { recovered: 0, verified: 0 },
     principal: { id: PRINCIPAL_ID },
     provider: { id: "provider_atlas_archive" },
@@ -205,6 +206,147 @@ test("a completed mission can load in live-x402 mode without requiring historica
   await rehydrateLocalAdapters(state, adaptersFor(x402));
 
   assert.deepEqual(restoredBatches, [[]]);
+});
+
+test("scoped rehydration downloads only the mutable target while rebuilding global local ledgers", async () => {
+  const recoveryCalls = [];
+  const x402Missions = [];
+  const bountyMissions = [];
+  const remoteProvider = {
+    id: "provider_lazarus_operator",
+    actorMode: "external",
+    externalEndpoint: true,
+  };
+  const target = mission({
+    id: "mission-target",
+    stepIndex: 5,
+    provider: remoteProvider,
+    pieces: { recovered: 12, verified: 0 },
+  });
+  const unrelated = mission({
+    id: "mission-unrelated",
+    stepIndex: 5,
+    provider: remoteProvider,
+    pieces: { recovered: 8, verified: 0 },
+  });
+  const completed = mission({
+    id: "mission-completed",
+    stepIndex: 9,
+    status: "COMPLETED",
+    provider: remoteProvider,
+    pieces: { recovered: 24, verified: 24 },
+  });
+  const adapters = adaptersFor({
+    mode: "local",
+    reset() {},
+    settleAvailability(input) { x402Missions.push(input.missionId); },
+  });
+  adapters.monad.createBounty = (input) => bountyMissions.push(input.missionId);
+  adapters.recovery = {
+    mode: "remote-provider",
+    networkedProviders: true,
+    provider: { providerId: "provider_lazarus_operator" },
+    reset() {},
+    buildManifest() { return { totalPieces: 24, contentRoot: CONTENT_ROOT }; },
+    start(id) { recoveryCalls.push(["start", id]); },
+    recoverThrough(id, count) { recoveryCalls.push(["recover", id, count]); },
+    verifyAll(id) { recoveryCalls.push(["verify", id]); },
+  };
+
+  await rehydrateLocalAdapters(
+    { missions: [target, unrelated, completed] },
+    adapters,
+    { targetMissionId: target.id, restoreTargetRecovery: true },
+  );
+
+  assert.deepEqual(recoveryCalls, [
+    ["start", target.id],
+    ["recover", target.id, 12],
+  ]);
+  assert.deepEqual(x402Missions.sort(), [completed.id, target.id, unrelated.id].sort());
+  assert.deepEqual(bountyMissions.sort(), [completed.id, target.id, unrelated.id].sort());
+});
+
+test("manifest comparison survives JSONB object-key reordering", async () => {
+  const expectedManifest = {
+    name: "jsonb-order-fixture",
+    license: "CC0-1.0",
+    totalBytes: 4,
+    totalPieces: 1,
+    contentSha256: "c".repeat(64),
+    contentRoot: "d".repeat(64),
+    pieces: [{ index: 0, hash: "e".repeat(64), size: 4 }],
+  };
+  const storedManifest = {
+    ...expectedManifest,
+    pieces: [{ size: 4, hash: "e".repeat(64), index: 0 }],
+  };
+  const adapters = adaptersFor({ mode: "local", reset() {}, settleAvailability() {} }, {
+    contentRoot: expectedManifest.contentRoot,
+  });
+  adapters.recovery.buildManifest = () => structuredClone(expectedManifest);
+
+  await rehydrateLocalAdapters({
+    missions: [mission({
+      contentRoot: expectedManifest.contentRoot,
+      manifest: storedManifest,
+      stepIndex: 0,
+    })],
+  }, adapters, { targetMissionId: MISSION_ID, restoreTargetRecovery: true });
+});
+
+test("fresh serverless adapters restore persisted merchant sessions and reject cross-mission replay", async () => {
+  const negotiation = new RemoteNegotiationAdapter({
+    baseUrl: "https://merchant.example",
+    apiToken: "unit-test-token",
+    expectedKeyId: `merchant_ed25519_${"a".repeat(64)}`,
+    contentRoot: "b".repeat(64),
+    currency: "USD",
+    fetchImpl: async () => { throw new Error("network must not be reached"); },
+  });
+  const adapters = adaptersFor({
+    mode: "local",
+    reset() {},
+    settleAvailability() {},
+  }, { contentRoot: "b".repeat(64) });
+  adapters.negotiation = negotiation;
+  const sharedSessionId = "negotiation_replayed_session";
+  const remoteProvider = {
+    id: "provider_lazarus_operator",
+    actorMode: "external",
+    externalEndpoint: true,
+  };
+  adapters.recovery.networkedProviders = true;
+  adapters.recovery.provider = { providerId: remoteProvider.id };
+
+  await assert.rejects(
+    rehydrateLocalAdapters({
+      missions: [
+        mission({
+          id: "mission-original",
+          contentRoot: "b".repeat(64),
+          manifest: { contentRoot: "b".repeat(64) },
+          stepIndex: 0,
+          deadline: "2026-08-09T13:00:00.000Z",
+          provider: remoteProvider,
+          negotiation: { sessionId: sharedSessionId },
+        }),
+        mission({
+          id: "mission-replay",
+          contentRoot: "b".repeat(64),
+          manifest: { contentRoot: "b".repeat(64) },
+          stepIndex: 0,
+          deadline: "2026-08-09T13:00:00.000Z",
+          provider: remoteProvider,
+          negotiation: {
+            sessionId: sharedSessionId,
+            acceptedQuote: { sessionId: sharedSessionId },
+          },
+        }),
+      ],
+    }, adapters, { targetMissionId: "mission-replay", restoreTargetRecovery: true }),
+    (error) => error.code === "MERCHANT_SESSION_BINDING_MISMATCH",
+  );
 });
 
 test("rehydrating a confirmed live-x402 receipt prevents signing or paying again", async () => {
