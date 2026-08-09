@@ -184,8 +184,9 @@ function isBlockNumber(value) {
   );
 }
 
-function paymentIdentifier(missionId, contentRoot) {
-  return `lazarus_x402_${sha256(`monad-testnet-v1|${missionId}|${contentRoot}`).slice(0, 40)}`;
+function paymentIdentifier(missionId, contentRoot, namespace = "default") {
+  assertIdentifier(namespace, "INVALID_X402_PAYMENT", "Payment namespace");
+  return `lazarus_x402_${sha256(`monad-testnet-v2|${namespace}|${missionId}|${contentRoot}`).slice(0, 40)}`;
 }
 
 function receiptIdentifier(missionId, contentRoot) {
@@ -216,6 +217,7 @@ class MonadX402Adapter {
     expectedProviderId = DEFAULT_PROVIDER_ID,
     explorerBaseUrl = MONAD_TESTNET_EXPLORER,
     persistPendingPayment,
+    paymentNamespace = "default",
   } = {}) {
     this.mode = "monad-testnet";
     this.liveSettlementEnabled = true;
@@ -272,6 +274,11 @@ class MonadX402Adapter {
     if (typeof persistPendingPayment !== "function") {
       throw configurationError("A durable pending-payment recorder is required before live x402 signing can be enabled.");
     }
+    this.paymentNamespace = assertIdentifier(
+      paymentNamespace,
+      "X402_INVALID_CONFIGURATION",
+      "Payment namespace",
+    );
 
     let normalizedRpcUrl = null;
     if (rpcUrl !== null) normalizedRpcUrl = normalizeHttpsUrl(rpcUrl, "MONAD_RPC_URL").href;
@@ -360,7 +367,7 @@ class MonadX402Adapter {
     const currency = normalizeCurrency(pending.currency, "");
     if (
       pending.receiptId !== receiptId ||
-      pending.paymentId !== paymentIdentifier(missionId, contentRoot) ||
+      pending.paymentId !== paymentIdentifier(missionId, contentRoot, this.paymentNamespace) ||
       pending.mode !== this.mode ||
       pending.network !== this.network ||
       pending.status !== "reconciliation_required" ||
@@ -414,7 +421,7 @@ class MonadX402Adapter {
     const paymentResponse = receipt.paymentResponse;
     if (
       receipt.receiptId !== expectedReceiptId ||
-      receipt.paymentId !== paymentIdentifier(missionId, contentRoot) ||
+      receipt.paymentId !== paymentIdentifier(missionId, contentRoot, this.paymentNamespace) ||
       receipt.mode !== this.mode ||
       receipt.status !== "settled" ||
       receipt.network !== this.network ||
@@ -943,7 +950,7 @@ class MonadX402Adapter {
 
     await this.assertNetwork();
     await this.assertBalance();
-    const operationPaymentId = paymentIdentifier(missionId, contentRoot);
+    const operationPaymentId = paymentIdentifier(missionId, contentRoot, this.paymentNamespace);
     const { httpClient } = this.createPaymentClient({
       expectedResourceUrl: preflight.resourceUrl,
       operationPaymentId,
@@ -968,26 +975,16 @@ class MonadX402Adapter {
       externalEndpoint: true,
       preparedAt: currentTime(this.clock).toISOString(),
     };
-    try {
-      // This durable write happens before signature creation. A crash after it
-      // can cause a conservative false-positive reconciliation block, but can
-      // never silently authorize the same operation twice.
-      await this.persistPendingPayment(clone(pendingPayment));
-    } catch {
-      throw new MonadX402Error(
-        "X402_PENDING_PAYMENT_PERSIST_FAILED",
-        "The pending x402 operation could not be durably recorded, so no payment was signed.",
-        { statusCode: 503, retryable: true },
-      );
-    }
-    this.pendingReconciliation.set(receiptId, pendingPayment);
-
     let paymentPayload;
     try {
       paymentPayload = await httpClient.createPaymentPayload(clone(preflight.paymentRequired));
     } catch (error) {
       if (error instanceof MonadX402Error) throw error;
-      throw new MonadX402Error("X402_PAYMENT_SIGNATURE_FAILED", "The Monad payment authorization could not be signed.");
+      throw new MonadX402Error(
+        "X402_PAYMENT_SIGNATURE_FAILED",
+        "The Monad payment authorization could not be signed; no paid request was sent.",
+        { statusCode: 503, retryable: true },
+      );
     }
     if (
       extractPaymentIdentifier(paymentPayload) !== operationPaymentId ||
@@ -997,6 +994,21 @@ class MonadX402Adapter {
     }
 
     const headers = httpClient.encodePaymentSignatureHeader(paymentPayload);
+    try {
+      // Signing alone cannot move funds. Persist the global transmission gate
+      // only after the payload and header are fully built, and immediately
+      // before the first paid request. Concurrent serverless requests may
+      // create signatures, but only the durable CAS winner can transmit one.
+      await this.persistPendingPayment(clone(pendingPayment));
+    } catch {
+      throw new MonadX402Error(
+        "X402_PENDING_PAYMENT_PERSIST_FAILED",
+        "The pending x402 operation could not be durably recorded, so no paid request was sent.",
+        { statusCode: 503, retryable: true },
+      );
+    }
+    this.pendingReconciliation.set(receiptId, pendingPayment);
+
     let pendingResponse;
     try {
       pendingResponse = await this.beginPaidFetch(preflight.resourceUrl, headers);

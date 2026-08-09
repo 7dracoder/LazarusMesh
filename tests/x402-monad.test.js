@@ -292,6 +292,17 @@ test("live Monad x402 signs one bounded EIP-3009 payment and independently verif
   assert.equal(harness.pendingPayments[0].status, "reconciliation_required");
 });
 
+test("payment identifiers are isolated by the durable preview namespace", async () => {
+  const namespace = "preview-x402-cycle-a";
+  const harness = makeHarness({ adapterOverrides: { paymentNamespace: namespace } });
+  const receipt = await preflightAndSettle(harness);
+  assert.equal(receipt.paymentId, paymentIdentifier(MISSION_ID, CONTENT_ROOT, namespace));
+  assert.notEqual(
+    receipt.paymentId,
+    paymentIdentifier(MISSION_ID, CONTENT_ROOT, "preview-x402-cycle-b"),
+  );
+});
+
 test("persisted live receipts rehydrate without another signature, HTTP call, or chain write", async () => {
   const source = makeHarness();
   const receipt = await preflightAndSettle(source);
@@ -354,7 +365,7 @@ test("settlement is refused before a fresh, verified 402 preflight", async () =>
   assert.equal(harness.calls.length, 0);
 });
 
-test("live signing is refused when the pending-payment gate cannot be persisted", async () => {
+test("paid transmission is refused when the pending-payment gate cannot be persisted", async () => {
   const harness = makeHarness({
     adapterOverrides: {
       persistPendingPayment: async () => {
@@ -375,8 +386,36 @@ test("live signing is refused when the pending-payment gate cannot be persisted"
       error.retryable === true
     ),
   );
-  assert.equal(harness.signCount, 0);
+  assert.equal(harness.signCount, 1, "an unused signature may exist, but it is never transmitted");
   assert.equal(harness.calls.length, 1);
+});
+
+test("a definitive pre-transmission signing failure creates no durable pending gate", async () => {
+  const harness = makeHarness({
+    adapterOverrides: {
+      signer: {
+        address: PAYER,
+        async signTypedData() {
+          throw new Error("signer unavailable");
+        },
+      },
+    },
+  });
+  await harness.adapter.requestAvailability(CONTENT_ROOT);
+  await assert.rejects(
+    harness.adapter.settleAvailability({
+      missionId: MISSION_ID,
+      contentRoot: CONTENT_ROOT,
+      payer: PRINCIPAL_ID,
+    }),
+    (error) => (
+      error.code === "X402_PAYMENT_SIGNATURE_FAILED" &&
+      error.statusCode === 503 &&
+      error.retryable === true
+    ),
+  );
+  assert.equal(harness.pendingPayments.length, 0);
+  assert.equal(harness.calls.length, 1, "no paid request reached the seller");
 });
 
 test("payment policy rejects a wrong asset, payee, price, or missing idempotency support before signing", async (t) => {

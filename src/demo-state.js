@@ -1,6 +1,9 @@
 const { randomUUID } = require("node:crypto");
 const { RATE_SET_ID, currencyInfo, fromAccountingMinorUp } = require("./domain/currency");
 
+const DEFAULT_MISSION_LIFETIME_MS = 60 * 60 * 1000;
+const LIVE_PREVIEW_MISSION_LIFETIME_MS = 30 * 24 * 60 * 60 * 1000;
+
 function publicManifest(manifest) {
   return {
     name: manifest.name,
@@ -32,6 +35,7 @@ function createMission({
   totalBudgetMinor = 2000,
   currency = "USD",
   currencyRateSet = RATE_SET_ID,
+  lifetimeMs = DEFAULT_MISSION_LIFETIME_MS,
 } = {}) {
   const manifest = recovery.buildManifest(24);
   recovery.start(id, manifest);
@@ -39,7 +43,14 @@ function createMission({
   if (!currencyMetadata) throw new Error("CURRENCY_NOT_SUPPORTED");
   const converted = (usdMinor) => fromAccountingMinorUp(usdMinor, currency);
   const stakeMinor = converted(200);
-  const expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+  if (
+    !Number.isSafeInteger(lifetimeMs) ||
+    lifetimeMs < DEFAULT_MISSION_LIFETIME_MS ||
+    lifetimeMs > LIVE_PREVIEW_MISSION_LIFETIME_MS
+  ) {
+    throw new Error("MISSION_LIFETIME_INVALID");
+  }
+  const expiresAt = new Date(Date.now() + lifetimeMs).toISOString();
   const negotiationTerms = {
     purchaseModel: "one_time",
     service: "archival_egress",
@@ -181,8 +192,11 @@ function createMission({
   };
 }
 
-function createDefaultState(recovery, { system = {} } = {}) {
-  const mission = createMission({ recovery });
+function createDefaultState(recovery, {
+  system = {},
+  missionLifetimeMs = DEFAULT_MISSION_LIFETIME_MS,
+} = {}) {
+  const mission = createMission({ recovery, lifetimeMs: missionLifetimeMs });
   return {
     schemaVersion: 3,
     activeMissionId: mission.id,
@@ -201,4 +215,10 @@ function createDefaultState(recovery, { system = {} } = {}) {
   };
 }
 
-module.exports = { createDefaultState, createMission, makeEvent };
+module.exports = {
+  DEFAULT_MISSION_LIFETIME_MS,
+  LIVE_PREVIEW_MISSION_LIFETIME_MS,
+  createDefaultState,
+  createMission,
+  makeEvent,
+};

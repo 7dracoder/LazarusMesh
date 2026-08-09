@@ -2,120 +2,111 @@
 
 This document answers two questions precisely:
 
-1. Who are the merchants and agents shown by Lazarus Mesh?
-2. What must exist before the buyer can communicate with real merchant agents?
+1. Who are the merchants, agents, and wallets shown by Lazarus Mesh?
+2. Which of them communicate or move testnet value in each deployment?
 
 ## Current deployed reality
 
-The public Vercel application is a durable **local simulation** backed by Neon. The browser and database are real infrastructure; the marketplace counterparties, payment execution, chain writes, recovery network, verifier network, and replica count are simulated.
+Lazarus Mesh has three deliberately different surfaces:
+
+| Surface | Buyer behavior | Seller behavior | Financial boundary |
+| --- | --- | --- | --- |
+| Public production | Local x402-shaped simulation | Disabled | Entirely local-only: no payer signer, paid seller route, facilitator settlement, or chain write. |
+| Protected branch preview | One fixed mission may use the Privy payer server wallet once | Durable x402 seller is enabled behind the same deployment protection | One capped test-USDC discovery payment; reset and arbitrary mission creation are disabled. |
+| Local Node runtime | Local by default; optional raw-key or Privy testnet buyer | Seller is optional | Developer-controlled integration surface; never expose it directly to the internet. |
+
+Neon and Vercel are real infrastructure. Only the protected preview's x402 buyer/seller/facilitator path can be a real Monad testnet action. Merchant bargaining, the archive purchase, the recovery bounty, provider fulfillment, verifier independence, and reseeding are still deterministic local models.
 
 | Displayed actor | Runtime identity | What it really is | External connection |
 | --- | --- | --- | --- |
-| Lazarus buyer policy | `lazarus_buyer_policy` | Deterministic recovery and bargaining workflow | None |
-| Atlas Archive Cloud | `merchant_atlas_archive` | Simulated seller with a `$12.00` ask and `$9.75` floor | None |
-| Atlas Archive Node | `provider_atlas_archive` | Simulated provider backed by the bundled CC0 fixture | None |
-| North / East / West Verifier | local verifier IDs | Scripted quorum roles | None |
-| Lazarus Demo Sponsor | `principal_lazarus_demo` | Simulated mission principal | None |
-| Rain | payment rail adapter | Local policy simulation or optional external Rain sandbox simulation | Not a merchant |
-| Monad | coordination/payment-chain adapter | Local bounty ledger; an opt-in Node runtime can settle only x402 discovery on Monad testnet | Not an agent |
-| x402 | machine-payment protocol adapter | Local 402 handshake or an opt-in, capped test-USDC discovery payment to a configured x402 seller | Not a merchant |
+| Lazarus buyer policy | Buyer orchestrator | Deterministic recovery and bargaining workflow | Calls only configured adapters; it is not an LLM chat agent. |
+| Atlas Archive Cloud | Archive merchant | Simulated seller with a reference ask and floor | No merchant API, checkout, or human merchant is contacted. |
+| Atlas Archive Node | Recovery provider | Simulated provider backed by the bundled CC0 fixture | No provider network is contacted. |
+| North / East / West Verifier | Verification quorum | Scripted local roles | No independent verifier service is contacted. |
+| Privy payer server wallet | x402 payer | Dedicated low-value EVM signer held behind Privy's server API | Used only by the armed, protected preview or an access-controlled local run. |
+| Receive-only payee | x402 recipient | Distinct public EVM address | Receives test USDC; Lazarus does not need or store its private key to receive. |
+| Lazarus x402 availability seller | Paid API resource | Protected-preview `GET /api/x402/availability/:contentRoot` endpoint | Issues 402 requirements, uses the facilitator, and persists payment-ID outcomes in Neon. It is disabled in production. |
+| Rain | Card-control rail | Local policy simulation or optional Rain sandbox adapter | Not a merchant, agent, or Monad wallet. |
+| Monad | Chain | Testnet settlement/receipt verification plus a still-local bounty model | Not a merchant or bargaining agent. |
+| x402 | Payment protocol | Payment requirements, authorization, settlement evidence, and replay identity | Not a bargaining protocol. |
 
-`Unrelated Luxury Market` and `Unapproved Merchant` are negative-control fixtures used only to prove that policy blocks an out-of-scope purchase.
+Negative-control merchant names in the UI exist only to demonstrate policy denial.
 
 ## What communicates today
 
-The public Vercel runtime is local-only:
+Public production is fully local-only:
 
 ```text
-Browser
-  -> same-origin Lazarus API
-      -> local x402 handshake
-      -> local Atlas offer/counter/quote model
-      -> local Rain card-policy simulation
-      -> local Monad bounty ledger
-      -> bundled CC0 fixture bytes
-      -> scripted local verifier roles
-  -> Neon Postgres for durable demo state
+Browser -> Lazarus mission API -> local x402 simulation
 ```
 
-An access-controlled Node runtime may independently set `MONAD_EXECUTION_MODE=x402-testnet`. That adds one external path:
+The protected branch preview co-locates exactly one outgoing buyer path and its durable seller:
 
 ```text
-Lazarus x402 buyer
-  -> configured HTTPS x402 availability seller
-  -> seller/facilitator submits settlement
-  -> Monad testnet test-USDC transfer and confirmed receipt
+Fixed bundled mission
+  -> Lazarus x402 buyer
+  -> Privy payer server wallet signs approved EIP-3009 typed data
+  -> internal same-origin seller transport
+  -> protected Lazarus x402 seller
+  -> facilitator settlement on Monad testnet
+  -> confirmed test-USDC Transfer to the distinct payee
 ```
 
-The payer signs an EIP-3009 `TransferWithAuthorization` and does not submit the transaction, so the buyer flow is gasless. The facilitator or other chain submitter needs MON for gas; Lazarus does not inspect or quantify that submitter's MON balance. The payer still needs enough of the pinned Monad testnet USDC.
+The buyer uses the internal same-origin seller transport so it does not bypass or depend on calling the deployment through Vercel's external protection challenge. The HTTP seller route still exists for protocol inspection and protected clients, but it remains behind Vercel Deployment Protection and is disabled in public production.
 
-Enabling this path does not add merchant chat, LLM negotiation, A2A, merchant website automation, provider download, independent verifier requests, or seeding-network requests. Bargaining, the bounty registry and releases, the provider, verifier quorum, fixture recovery, and replica count remain local.
+The buyer authorization is gasless; the facilitator or other settlement submitter needs testnet MON for gas. The payer needs only the capped amount of the pinned Monad test USDC unless that facilitator explicitly requires otherwise.
+
+This path does not add merchant chat, A2A negotiation, website automation, archive checkout, provider download, independent verification, or seeding. Atlas bargaining and the `$9.75` reference archive allocation remain local even when the one-cent-reference x402 discovery payment settles onchain.
+
+## Wallet security boundary
+
+The payer and payee must be different wallets with different roles:
+
+- The **payer** is a dedicated Privy server wallet funded only with the test USDC needed for the demo. Its app secret and wallet ID stay in branch-scoped server-side environment variables.
+- The **payee** is receive-only from this application's perspective. The seller needs only its public address; no payee private key, seed phrase, or signing credential belongs in Vercel.
+- Vercel refuses a raw `MONAD_PRIVATE_KEY` in live preview mode.
+- A Privy wallet policy should restrict the payer to the intended typed-data method and testnet payment envelope.
+- Lazarus independently validates the exact `TransferWithAuthorization` schema, USDC domain/version, Monad testnet chain, token contract, payer, payee, amount cap, nonce shape, and short validity window before requesting a Privy signature. It then verifies that Privy's returned signature recovers to the configured payer address.
+
+Neither Vercel Deployment Protection nor a Privy policy replaces application policy. The preview requires all three layers: deployment authentication, the one-shot runtime gate, and restrictive signing policy.
 
 ## What Rain, x402, and A2A each do
 
-- **Rain** can provide controlled virtual-card infrastructure. It does not search for sellers, bargain, or operate every merchant checkout. A card may work at a compatible conventional card merchant, but login, inventory, regional eligibility, 3DS/OTP, CAPTCHA, fraud checks, shipping, refunds, and merchant terms still apply. See [Rain scoped cards](https://www.rain.xyz/solutions/scoped-cards) and [Rain card issuing](https://www.rain.xyz/product/card-issuing).
-- **x402** carries machine-readable payment requirements and payment proof for a service that explicitly implements x402. It is a payment protocol, not a bargaining protocol. See the [x402 payment flow](https://docs.cdp.coinbase.com/x402/how-it-works).
-- **A2A** lets compatible remote agents advertise identity, capabilities, endpoint, and authentication through Agent Cards. It cannot convert an arbitrary shop into an agent. See [A2A 1.0](https://a2a-protocol.org/v1.0.0/).
+- **Rain** provides controlled virtual-card infrastructure. It does not find sellers, bargain, or operate merchant checkout. Login, inventory, 3DS/OTP, CAPTCHA, fraud checks, refunds, and merchant terms remain separate concerns.
+- **x402** carries machine-readable payment requirements and proof for an endpoint that explicitly implements it. It does not negotiate price or terms.
+- **A2A** can let compatible remote agents advertise capabilities and communicate. It cannot turn an arbitrary merchant into an agent.
+
+The Rain adapter is implemented, but the current deployment must keep `ADAPTER_MODE=local`: the previously supplied sandbox API credential must be rotated, and the supplied collateral/contract identifier is not a valid UUID. Do not guess or repair an identifier. Rain sandbox can be armed only after the operator supplies a newly rotated key and a valid provider-issued UUID through server-side secrets.
 
 ## Execution and currency boundary
 
-`ADAPTER_MODE` controls Rain, while `MONAD_EXECUTION_MODE` independently controls x402. The public Vercel deployment permits only local execution; Rain sandbox and Monad x402 testnet require an explicitly configured Node runtime.
+Mission accounting supports USD, EUR, GBP, CAD, and AUD using fixed demo references, not live exchange rates. These values control display, budgets, bargaining, savings, and local reward accounting.
 
-Mission accounting supports USD, EUR, GBP, CAD, and AUD using fixed demo reference values rather than live exchange rates. Local Rain supports all five for simulation, but Rain sandbox missions must use USD. The Monad x402 rail always settles in the pinned test-USDC asset; selecting another accounting currency does not create an EUR-, GBP-, CAD-, or AUD-denominated token payment.
+Settlement is separate:
 
-## Safe live architecture
+- local adapters move no value;
+- Rain sandbox, once correctly configured, accepts USD mission accounting and uses sandbox rUSD collateral;
+- Monad x402 always settles the pinned test-USDC asset; and
+- MON is gas for the settlement submitter, not a selectable mission currency.
 
-```text
-Authorized recovery request
-  -> buyer orchestrator
-  -> curated merchant registry
-  -> merchant A2A or merchant-specific quote connector
-  -> deterministic quote policy
-  -> optional human approval
-  -> Rain scoped card OR exact x402 payment on Monad
-  -> provider fulfillment
-  -> independent verification
-  -> durable receipt, reconciliation, and refund state
-```
+Selecting EUR, GBP, CAD, or AUD does not create a token or card payment in that currency.
 
-Real bargaining must be a merchant-supported structured capability such as:
+## What real bargaining would require
 
-- `request_quote`
-- `counter_offer`
-- `accept_quote`
-- `cancel_quote`
+The current bargaining transcript is an in-process deterministic state machine. A real merchant integration needs authenticated structured operations such as `request_quote`, `counter_offer`, `accept_quote`, and `cancel_quote`.
 
-The binding response must commit to merchant identity, endpoint/payee, content root or SKU, purpose, price, currency, terms, expiry, nonce, session, and idempotency key. It must be authenticated or signed by the merchant. Free-form model output must never authorize payment.
+The merchant's binding response must commit to merchant identity, endpoint/payee, content root or SKU, purpose, price, currency, terms, expiry, nonce, session, and idempotency key. It must be authenticated or signed by the merchant. Free-form model output must never directly authorize payment.
 
-## What is required from external agents
+To connect external agents, provide:
 
-To connect the user's own agents, provide:
+1. merchant-agent HTTPS or A2A endpoint and authentication method;
+2. merchant signing/public key and quote schema;
+3. provider endpoint for signed manifests and authenticated piece streaming;
+4. at least two independent verifier endpoints and signing keys; and
+5. fulfillment, refund, supported-currency, payee, and MCC rules.
 
-1. Merchant-agent HTTPS or A2A endpoint.
-2. Authentication method and merchant signing/public key.
-3. Agent Card or request/response schema for offers, counters, acceptance, cancellation, and errors.
-4. Provider-agent endpoint for the manifest and authenticated piece streaming.
-5. At least two independent verifier-agent endpoints and signing keys.
-6. Merchant identity, payee, MCC where applicable, fulfillment rules, refund policy, and supported currencies.
-
-The production adapter must use HTTPS allowlists, bounded timeouts and response sizes, durable idempotency, replay protection, quote-signature verification, and a persisted operation journal. If an external actor fails, the app must show the failure and stop; it must never silently substitute simulated success.
-
-The current runtime enforces that boundary: merely setting a connector to `liveMerchantApi` is insufficient. The connector and returned quote must both report verified merchant authentication and a verified signature before the quote can be accepted. Otherwise the mission stops with `MERCHANT_QUOTE_UNTRUSTED` before any card or payment step.
-
-## Opt-in testnet boundary
-
-The repository includes an opt-in buyer path for a real test network with payment bounded to test assets. It requires:
-
-- a server-side managed EVM test signer;
-- sufficient pinned test USDC in the payer wallet;
-- MON gas held by the facilitator or other account that submits settlement, not necessarily by the EIP-3009 payer;
-- one genuine x402-enabled test seller that serves the authorized fixture;
-- payment caps, an allowlisted payee, durable payment-identifier deduplication, a kill switch, and receipt reconciliation.
-
-Lazarus does not check or estimate the submitter's MON requirement. Monad documents the x402 testnet flow at [Monad x402](https://docs.monad.xyz/guides/x402). Core x402 bargaining is still out of scope; merchant negotiation remains a separate, currently local capability.
+The live adapter must add HTTPS allowlists, bounded timeouts and bodies, durable idempotency, replay protection, signature verification, and an operation journal. Failure must stop the mission; it must never silently substitute a simulated success.
 
 ## Production-money boundary
 
-Do not enable real funds in the public demo. Rain production requires commercial and compliance onboarding, production credentials, verified users/businesses, funding, webhooks, secure card-detail injection, and controlled launch approval. Existing sandbox identifiers do not provide production authority. See [Rain's launch process](https://www.rain.xyz/resources/launch-a-card-program-with-rain).
-
-Monad mainnet additionally requires production key custody, real assets, explicit permission to move funds, strict budgets, allowlisted payees, a kill switch, and reconciliation. Unknown merchants must stop at preview or human approval rather than receiving autonomous payment.
+Do not treat test USDC, sandbox rUSD, or synthetic mission accounting as production money. Mainnet and production-card operation still require managed custody, user/tenant authorization, rate limits and quotas, production onboarding, signed webhooks, reconciliation, refunds/disputes, incident controls, compliance review, and explicit permission to move funds.
