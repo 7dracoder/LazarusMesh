@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en" data-theme="dark">
+<html lang="en" data-theme="light">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -7,17 +7,14 @@
       name="description"
       content="Lazarus Mesh deterministic digital artifact recovery simulation"
     />
-    <meta name="color-scheme" content="dark light" />
-    <title>Lazarus Mesh | Recovery Command</title>
+    <meta name="color-scheme" content="light dark" />
+    <title>Lazarus Mesh · Verified Recovery Desk</title>
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="stylesheet" href="/styles.css" />
     <script src="/app.js" defer></script>
   </head>
   <body>
-    <a class="skip-link" href="#main-content">Skip to command center</a>
-
-    <div class="ambient ambient-one" aria-hidden="true"></div>
-    <div class="ambient ambient-two" aria-hidden="true"></div>
+    <a class="skip-link" href="#main-content">Skip to the recovery desk</a>
 
     <div class="app-shell">
       <header class="topbar">
@@ -30,8 +27,8 @@
             </svg>
           </span>
           <span class="brand-copy">
-            <strong>LAZARUS</strong>
-            <span>MESH</span>
+            <strong>Lazarus</strong>
+            <span>Mesh</span>
           </span>
         </a>
 
@@ -112,6 +109,12 @@
           </dl>
         </section>
 
+        <p class="sidebar-partners">
+          <span>Rain</span>
+          <span>Monad</span>
+          <span>x402</span>
+        </p>
+
         <p class="sidebar-footnote" id="runtime-footnote">
           Loading runtime configuration…
         </p>
@@ -153,17 +156,29 @@
 
         <section class="empty-state panel" id="empty-state" hidden>
           <div class="empty-symbol" aria-hidden="true">
-            <span></span>
+            <svg viewBox="0 0 48 48">
+              <path d="M10 10h28M10 24h28M10 38h28M10 10v28M24 10v28M38 10v28" />
+              <circle class="mesh-node" cx="10" cy="10" r="2.4" />
+              <circle class="mesh-node" cx="38" cy="10" r="2.4" />
+              <circle class="mesh-node" cx="10" cy="38" r="2.4" />
+              <circle class="mesh-node" cx="38" cy="38" r="2.4" />
+              <circle class="mesh-relit" cx="24" cy="24" r="4.2" />
+            </svg>
           </div>
-          <p class="eyebrow">Recovery network idle</p>
-          <h1>Bring lost knowledge back online.</h1>
+          <p class="eyebrow">Recovery desk · standing by</p>
+          <h1>Pay for verified recovery, not promises.</h1>
           <p>
             Create a mission from a known content root, grant a bounded budget, and
             watch the local orchestrator simulate discovery, bargaining, verification, and replication.
           </p>
           <button class="primary-button" data-open-mission type="button">
-            Create your first mission
+            Open a recovery mission
           </button>
+          <p class="empty-partners">
+            <i aria-hidden="true"></i>Rain
+            <i aria-hidden="true"></i>Monad
+            <i aria-hidden="true"></i>x402
+          </p>
         </section>
 
         <div id="dashboard" hidden>
@@ -348,8 +363,8 @@
             <section class="rail-panel panel" aria-labelledby="rails-heading">
               <div class="panel-heading panel-heading-split">
                 <div>
-                  <p class="eyebrow" id="rails-eyebrow">Demo treasury</p>
-                  <h2 id="rails-heading">Simulated payment rails</h2>
+                  <p class="eyebrow" id="rails-eyebrow">Bounded payment authority</p>
+                  <h2 id="rails-heading">Payment rails</h2>
                 </div>
                 <span class="policy-chip"><i aria-hidden="true"></i>Policy enforced</span>
               </div>
