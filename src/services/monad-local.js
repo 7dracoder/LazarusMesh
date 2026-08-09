@@ -1,4 +1,22 @@
 const { localId, localTxHash } = require("../lib/ids");
+const { normalizeCurrency, toAccountingMinorUp } = require("../domain/currency");
+
+const MONAD_USDC_TESTNET = "0x534b2f3A21130d7a60830c2Df862319e593943A3";
+
+function simulatedUsdcAtomic(amountMinor, currency) {
+  const usdMinor = toAccountingMinorUp(amountMinor, currency);
+  return BigInt(usdMinor) * 10_000n;
+}
+
+function simulatedUsdcSettlementAtomic(amountAtomic) {
+  return {
+    symbol: "USDC",
+    address: MONAD_USDC_TESTNET,
+    decimals: 6,
+    amountAtomic: BigInt(amountAtomic).toString(),
+    mode: "synthetic-reference",
+  };
+}
 
 class LocalMonadAdapter {
   constructor({ clock = () => new Date() } = {}) {
@@ -25,17 +43,22 @@ class LocalMonadAdapter {
       transactionHash: localTxHash(operation, missionId, this.sequence, timestamp),
       timestamp,
       confirmed: true,
+      synthetic: true,
+      fundsMoved: false,
+      chainWrite: false,
       ...details,
     };
   }
 
-  createBounty({ missionId, sponsor, contentRoot, rewardMinor, stakeMinor }) {
+  createBounty({ missionId, sponsor, contentRoot, rewardMinor, stakeMinor, currency = "USD" }) {
+    const normalizedCurrency = normalizeCurrency(currency);
     if (
       typeof missionId !== "string" || missionId.length === 0 ||
       typeof sponsor !== "string" || sponsor.length === 0 ||
       typeof contentRoot !== "string" || contentRoot.length === 0 ||
       !Number.isSafeInteger(rewardMinor) || rewardMinor <= 0 ||
-      !Number.isSafeInteger(stakeMinor) || stakeMinor <= 0
+      !Number.isSafeInteger(stakeMinor) || stakeMinor <= 0 ||
+      !normalizedCurrency
     ) {
       throw new Error("INVALID_BOUNTY_PARAMETERS");
     }
@@ -48,12 +71,20 @@ class LocalMonadAdapter {
       contentRoot,
       rewardMinor,
       stakeMinor,
+      currency: normalizedCurrency,
       releasedMinor: 0,
+      settlementAmountAtomic: simulatedUsdcAtomic(rewardMinor, normalizedCurrency),
+      releasedSettlementAtomic: 0n,
       status: "Open",
       attestations: [],
     };
     this.bounties.set(missionId, bounty);
-    return this.receipt("createBounty", missionId, { bountyId: bounty.bountyId, amountMinor: rewardMinor });
+    return this.receipt("createBounty", missionId, {
+      bountyId: bounty.bountyId,
+      amountMinor: rewardMinor,
+      currency: bounty.currency,
+      settlementAsset: simulatedUsdcSettlementAtomic(bounty.settlementAmountAtomic),
+    });
   }
 
   claimBounty(missionId, provider) {
@@ -64,7 +95,17 @@ class LocalMonadAdapter {
     }
     bounty.provider = provider;
     bounty.status = "Claimed";
-    return this.receipt("claimBounty", missionId, { provider, stakeMinor: bounty.stakeMinor });
+    return this.receipt("claimBounty", missionId, {
+      provider,
+      stakeMinor: bounty.stakeMinor,
+      currency: bounty.currency,
+      collateralAsset: {
+        symbol: "MON",
+        decimals: 18,
+        amountAtomic: null,
+        mode: "local-reference-only",
+      },
+    });
   }
 
   recordAttestations(missionId, attestations, quorum = 2) {
@@ -87,6 +128,7 @@ class LocalMonadAdapter {
     bounty.attestations = [...uniquePassing.values()];
     bounty.status = "Recovered";
     return this.receipt("recordAttestations", missionId, {
+      currency: bounty.currency,
       quorum: uniquePassing.size,
       attestationDigest: localTxHash(JSON.stringify(bounty.attestations)),
     });
@@ -105,12 +147,20 @@ class LocalMonadAdapter {
       throw new Error("INVALID_RELEASE_PERCENTAGE");
     }
     const amountMinor = Math.max(0, targetReleased - bounty.releasedMinor);
+    const targetSettlementAtomic = percentage === 100
+      ? bounty.settlementAmountAtomic
+      : (bounty.settlementAmountAtomic * BigInt(percentage)) / 100n;
+    const amountSettlementAtomic = targetSettlementAtomic - bounty.releasedSettlementAtomic;
+    if (amountSettlementAtomic < 0n) throw new Error("INVALID_RELEASE_PERCENTAGE");
     bounty.releasedMinor += amountMinor;
+    bounty.releasedSettlementAtomic = targetSettlementAtomic;
     bounty.status = percentage >= 100 ? "Completed" : "Retaining";
     return this.receipt("releaseReward", missionId, {
       label,
       percentage,
       amountMinor,
+      currency: bounty.currency,
+      settlementAsset: simulatedUsdcSettlementAtomic(amountSettlementAtomic),
       totalReleasedMinor: bounty.releasedMinor,
     });
   }

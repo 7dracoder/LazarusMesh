@@ -1,11 +1,32 @@
 const { randomUUID } = require("node:crypto");
 const { makeEvent } = require("./demo-state");
 const { assertTransition, evaluatePolicy, evaluateQuote } = require("./domain");
+const { potentiallyLiveRainSandboxCard } = require("./domain/authority");
+const { currencyInfo, fromAccountingMinorUp } = require("./domain/currency");
 
 const STEP_COUNT = 9;
 
+function formatMinor(amountMinor, currency = "USD") {
+  const info = currencyInfo(currency) || currencyInfo("USD");
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: info.code,
+    minimumFractionDigits: info.minorDigits,
+    maximumFractionDigits: info.minorDigits,
+  }).format(amountMinor / (10 ** info.minorDigits));
+}
+
 class LazarusOrchestrator {
-  constructor({ store, rain, monad, x402, negotiation, recovery, broadcast = () => {} }) {
+  constructor({
+    store,
+    rain,
+    monad,
+    x402,
+    negotiation,
+    recovery,
+    broadcast = () => {},
+    persistState = async () => {},
+  }) {
     this.store = store;
     this.rain = rain;
     this.monad = monad;
@@ -13,22 +34,28 @@ class LazarusOrchestrator {
     this.negotiation = negotiation;
     this.recovery = recovery;
     this.broadcast = broadcast;
+    this.persistState = persistState;
     this.activeRuns = new Map();
     this.generation = 0;
   }
 
   async reset(nextStateFactory) {
-    const activeSandboxAuthority = this.store.get().missions.some(
-      (mission) => (
-        mission.rainCard?.mode === "rain-sandbox" &&
-        ["active", "expiry_scheduled"].includes(mission.rainCard.state) &&
-        new Date(mission.rainCard.expiresAt).getTime() > Date.now()
-      ),
-    );
+    const activeSandboxAuthority = this.store.get().missions.some((mission) => (
+      potentiallyLiveRainSandboxCard(mission.rainCard)
+    ));
     if (activeSandboxAuthority) {
       const error = new Error("Reset blocked while a Rain sandbox card can still be live remotely. Complete the mission and wait for the recorded card expiry.");
       error.statusCode = 409;
       error.code = "RAIN_SANDBOX_AUTHORITY_ACTIVE";
+      throw error;
+    }
+    const pendingMonadPayment = this.store.get().missions.some((mission) => (
+      mission.externalOperations?.x402Pending
+    ));
+    if (pendingMonadPayment) {
+      const error = new Error("Reset blocked while a Monad x402 payment outcome requires reconciliation.");
+      error.statusCode = 409;
+      error.code = "X402_RECONCILIATION_REQUIRED";
       throw error;
     }
     this.generation += 1;
@@ -78,6 +105,7 @@ class LazarusOrchestrator {
     await this.executeStep(mission, nextStep);
     mission.stepIndex = nextStep;
     this.store.save();
+    await this.persistState(this.store.get());
     this.publish();
     return mission;
   }
@@ -95,16 +123,30 @@ class LazarusOrchestrator {
     mission.running = true;
     this.store.save();
     this.publish();
+    let runError = null;
     try {
       while (mission.stepIndex < STEP_COUNT && runGeneration === this.generation) {
         await this.step(missionId, { fromRun: true });
         if (mission.stepIndex < STEP_COUNT) await new Promise((resolve) => setTimeout(resolve, delayMs));
       }
+    } catch (error) {
+      runError = error;
+      throw error;
     } finally {
       if (this.activeRuns.get(missionId) === runToken) this.activeRuns.delete(missionId);
       if (runGeneration === this.generation) {
         mission.running = false;
         this.store.save();
+        try {
+          // A failed run can happen after an external operation was durably
+          // checkpointed. Persist the cleared transient flag as well so a
+          // serverless restart never leaves the mission looking in-flight.
+          await this.persistState(this.store.get());
+        } catch (persistError) {
+          // Preserve the operational error that stopped the run. If the run
+          // itself succeeded, persistence failure is the result callers need.
+          if (!runError) throw persistError;
+        }
         this.publish();
       } else {
         // This object belongs to the cancelled pre-reset generation. Clear its
@@ -120,8 +162,9 @@ class LazarusOrchestrator {
     if (mission.events.length > 100) mission.events.length = 100;
   }
 
-  checkpoint() {
+  async checkpoint() {
     this.store.save();
+    await this.persistState(this.store.get());
     this.publish();
   }
 
@@ -138,8 +181,13 @@ class LazarusOrchestrator {
       operation: receipt.operation,
       status: "confirmed",
       amountMinor: receipt.amountMinor || receipt.stakeMinor || 0,
-      currency: receipt.currency || "USDC",
+      currency: receipt.currency || mission.budget?.currency || "USD",
+      ...(receipt.settlementAsset ? { settlementAsset: receipt.settlementAsset } : {}),
+      ...(receipt.collateralAsset ? { collateralAsset: receipt.collateralAsset } : {}),
       timestamp: receipt.timestamp,
+      synthetic: receipt.synthetic === true,
+      fundsMoved: receipt.fundsMoved === true,
+      chainWrite: receipt.chainWrite === true,
       details: receipt,
     });
   }
@@ -175,6 +223,7 @@ class LazarusOrchestrator {
       requirements: {
         maximumRounds: policy.maximumRounds,
         maximumAmountMinor: policy.maximumAmountMinor,
+        currency: mission.budget.currency,
       },
       idempotencyKey: `offers:${mission.id}`,
     });
@@ -190,8 +239,9 @@ class LazarusOrchestrator {
     });
 
     if (!response.quote && response.round?.seller?.action === "counter") {
-      const bestWithinPolicy = Math.floor(
-        (policy.targetAmountMinor + response.round.seller.amountMinor) / 2,
+      const bestWithinPolicy = Math.max(
+        response.session.floorAmountMinor || 1,
+        Math.ceil((policy.targetAmountMinor + response.round.seller.amountMinor) / 2),
       );
       response = await this.negotiation.sendCounterOffer({
         sessionId: sessionStart.sessionId,
@@ -213,6 +263,20 @@ class LazarusOrchestrator {
       sessionId: sessionStart.sessionId,
       quoteId: response.quote.quoteId,
     });
+    if (
+      this.negotiation.liveMerchantApi === true &&
+      (
+        this.negotiation.merchantAuthenticated !== true ||
+        this.negotiation.merchantSignedQuotes !== true ||
+        quote.merchantAuthenticated !== true ||
+        quote.merchantSigned !== true
+      )
+    ) {
+      const error = new Error("A live merchant quote must be authenticated and signature-verified before it can be accepted.");
+      error.statusCode = 422;
+      error.code = "MERCHANT_QUOTE_UNTRUSTED";
+      throw error;
+    }
     const decision = evaluateQuote({
       mission,
       policy,
@@ -243,41 +307,75 @@ class LazarusOrchestrator {
     });
     this.addEvent(
       mission,
-      "Bargaining agent",
-      "Binding archive quote accepted",
-      `Atlas accepted $${(quote.amountMinor / 100).toFixed(2)} after ${policy.rounds.length} counteroffers, saving $${(savingsMinor / 100).toFixed(2)} under one-time terms.`,
+      this.negotiation.liveMerchantApi === true ? "Merchant connector" : "Local bargaining policy",
+      this.negotiation.liveMerchantApi === true ? "Binding archive quote accepted" : "Policy-bound demo quote accepted",
+      this.negotiation.liveMerchantApi === true
+        ? `The merchant accepted ${formatMinor(quote.amountMinor, quote.currency)} after ${policy.rounds.length} counteroffers, saving ${formatMinor(savingsMinor, quote.currency)} under one-time terms.`
+        : `The simulated Atlas merchant model accepted ${formatMinor(quote.amountMinor, quote.currency)} after ${policy.rounds.length} deterministic counteroffers, saving ${formatMinor(savingsMinor, quote.currency)}. No external seller was contacted.`,
     );
     return quote;
   }
 
   async executeStep(mission, step) {
     if (step === 1) {
-      const requirement = await this.x402.requestAvailability(mission.contentRoot);
+      const requirement = await this.x402.requestAvailability(mission.contentRoot, {
+        budgetCurrency: mission.budget.currency,
+      });
       const receipt = await this.x402.settleAvailability({
         missionId: mission.id,
         contentRoot: mission.contentRoot,
         payer: mission.principal.id,
+        budgetCurrency: mission.budget.currency,
       });
-      this.transition(mission, "DISCOVERING", "Candidate discovered and archive price negotiated");
+      const pendingX402 = mission.externalOperations?.x402Pending;
+      if (
+        this.x402.mode !== "local" &&
+        (
+          !pendingX402 ||
+          pendingX402.receiptId !== receipt.receiptId ||
+          pendingX402.paymentId !== receipt.paymentId
+        )
+      ) {
+        const error = new Error("Confirmed x402 settlement does not match the durable pending-payment record.");
+        error.code = "X402_PENDING_PAYMENT_MISMATCH";
+        error.statusCode = 500;
+        throw error;
+      }
+      this.transition(
+        mission,
+        "DISCOVERING",
+        this.negotiation.liveMerchantApi === true
+          ? "Candidate discovered and archive price negotiated"
+          : "Demo candidate selected and quote simulated",
+      );
       mission.availability = 8;
-      mission.budget.spentMinor += receipt.amountMinor;
+      mission.budget.spentMinor += receipt.budgetImpactMinor;
       mission.payments.unshift({ ...receipt, protocolStatus: requirement.status });
       mission.transactions.unshift({
         id: receipt.transactionHash,
         rail: "x402 / Monad",
         operation: "availability intelligence",
         status: "settled",
-        amountMinor: receipt.amountMinor,
-        currency: "USDC",
+        amountMinor: receipt.budgetImpactMinor,
+        currency: receipt.currency,
+        settlementAsset: receipt.settlementAsset,
         timestamp: receipt.timestamp,
+        synthetic: receipt.synthetic === true,
+        fundsMoved: receipt.fundsMoved === true,
+        externalEndpoint: receipt.externalEndpoint === true,
       });
+      if (this.x402.mode !== "local") {
+        delete mission.externalOperations.x402Pending;
+        if (Object.keys(mission.externalOperations).length === 0) delete mission.externalOperations;
+        await this.checkpoint();
+      }
       await this.executeNegotiation(mission);
       this.addEvent(
         mission,
         "x402",
         this.x402.mode === "local" ? "Availability handshake simulated" : "Availability intelligence purchased",
         this.x402.mode === "local"
-          ? "The local HTTP 402 demo handshake found Atlas Archive Node. No token was signed or transferred."
+          ? "The local HTTP 402 demo handshake selected the simulated Atlas fixture provider. No external provider was contacted and no token was signed or transferred."
           : "Agent completed an HTTP 402 availability-discovery handshake and found Atlas Archive Node; bargaining happened in a separate quote session.",
       );
       return;
@@ -290,6 +388,7 @@ class LazarusOrchestrator {
         contentRoot: mission.contentRoot,
         rewardMinor: mission.budget.rewardMinor,
         stakeMinor: mission.budget.stakeMinor,
+        currency: mission.budget.currency,
       });
       this.transition(
         mission,
@@ -303,8 +402,8 @@ class LazarusOrchestrator {
         "Monad",
         this.monad.mode === "local" ? "Demo bounty recorded" : "Recovery bounty funded",
         this.monad.mode === "local"
-          ? `$${(mission.budget.rewardMinor / 100).toFixed(2)} demo reward recorded under content root ${mission.contentRoot.slice(0, 12)}… No USDC moved.`
-          : `$${(mission.budget.rewardMinor / 100).toFixed(2)} USDC escrowed under content root ${mission.contentRoot.slice(0, 12)}…`,
+          ? `${formatMinor(mission.budget.rewardMinor, mission.budget.currency)} demo reward recorded under content root ${mission.contentRoot.slice(0, 12)}… A USDC settlement reference was modeled, but no token moved.`
+          : `${formatMinor(mission.budget.rewardMinor, mission.budget.currency)} budget value was escrowed in USDC under content root ${mission.contentRoot.slice(0, 12)}…`,
       );
       return;
     }
@@ -338,6 +437,7 @@ class LazarusOrchestrator {
         allowedMerchants: [quote.merchantId],
         allowedMccs: [quote.mcc],
         allowedPurposes: [quote.purpose],
+        allowedCurrencies: [quote.currency],
         perTransactionLimitMinor: quote.amountMinor,
         totalLimitMinor: mission.policy.totalLimitMinor,
         maxTransactions: 1,
@@ -354,6 +454,7 @@ class LazarusOrchestrator {
         mcc: quote.mcc,
         purpose: quote.purpose,
         amountMinor: quote.amountMinor,
+        currency: quote.currency,
       };
       const preflightDecision = evaluatePolicy({
         mission: { ...mission, status: "RECOVERING" },
@@ -378,6 +479,7 @@ class LazarusOrchestrator {
         allowedMerchantIds: [quote.merchantId],
         allowedMccs: [quote.mcc],
         maximumAmountMinor: quote.amountMinor,
+        currency: quote.currency,
         maxTransactions: 1,
         expiresAt: quote.expiresAt,
         purpose: quote.purpose,
@@ -385,15 +487,17 @@ class LazarusOrchestrator {
       mission.rainCard = card;
       // Persist external authority immediately so a later network failure or
       // process interruption cannot make the application forget a live card.
-      this.checkpoint();
+      await this.checkpoint();
 
+      const blockedAmountMinor = fromAccountingMinorUp(900, mission.budget.currency);
       const blockedIntent = {
         id: `intent_blocked_${mission.id}`,
         rail: "rain_card",
         merchant: "merchant_luxury_market",
         mcc: "5944",
         purpose: "unrelated_purchase",
-        amountMinor: 900,
+        amountMinor: blockedAmountMinor,
+        currency: mission.budget.currency,
       };
       const blockedPolicyDecision = evaluatePolicy({
         mission: { ...mission, status: "RECOVERING" },
@@ -414,21 +518,24 @@ class LazarusOrchestrator {
         merchantName: "Unrelated Luxury Market",
         mcc: blockedIntent.mcc,
         amountMinor: blockedIntent.amountMinor,
-        currency: "USD",
+        currency: blockedIntent.currency,
         exerciseRemoteControl: true,
       });
       mission.payments.unshift(blocked);
       mission.transactions.unshift({
         id: blocked.transactionId,
-        rail: "Rain scoped card",
+        rail: localPaymentSimulation ? "Local scoped-card policy" : "Rain sandbox scoped card",
         operation: "blocked purchase",
         status: blocked.status,
         amountMinor: blocked.amountMinor,
         currency: blocked.currency,
         timestamp: blocked.checkedAt,
         reason: blocked.code,
+        synthetic: blocked.synthetic === true,
+        fundsMoved: blocked.fundsMoved === true,
+        externalEndpoint: blocked.externalEndpoint === true,
       });
-      this.checkpoint();
+      await this.checkpoint();
 
       const allowedPolicyDecision = evaluatePolicy({
         mission: { ...mission, status: "RECOVERING" },
@@ -461,15 +568,18 @@ class LazarusOrchestrator {
       mission.payments.unshift(allowed);
       mission.transactions.unshift({
         id: allowed.transactionId,
-        rail: "Rain scoped card",
+        rail: localPaymentSimulation ? "Local scoped-card policy" : "Rain sandbox scoped card",
         operation: "negotiated archival egress",
         status: allowed.status,
         amountMinor: allowed.amountMinor,
         currency: allowed.currency,
         timestamp: allowed.checkedAt,
         quoteId: quote.quoteId,
+        synthetic: allowed.synthetic === true,
+        fundsMoved: allowed.fundsMoved === true,
+        externalEndpoint: allowed.externalEndpoint === true,
       });
-      this.checkpoint();
+      await this.checkpoint();
       mission.budget.spentMinor += allowed.amountMinor;
       mission.negotiation.status = "consumed";
       mission.negotiation.consumedAt = allowed.checkedAt;
@@ -481,27 +591,27 @@ class LazarusOrchestrator {
       mission.availability = 16;
       this.addEvent(
         mission,
-        "Rain",
+        localPaymentSimulation ? "Local scoped-card policy" : "Rain",
         localPaymentSimulation ? "Policy safety test passed" : "Unauthorized purchase blocked",
         localPaymentSimulation
-          ? `Local policy simulation blocked the unrelated $9.00 purchase as designed: ${blocked.code}. No funds moved.`
-          : `An in-limit $9.00 unrelated-merchant purchase was denied: ${blocked.code}.`,
+          ? `Local policy simulation blocked the unrelated ${formatMinor(blockedAmountMinor, mission.budget.currency)} purchase as designed: ${blocked.code}. No funds moved.`
+          : `An in-limit ${formatMinor(blockedAmountMinor, mission.budget.currency)} unrelated-merchant purchase was denied: ${blocked.code}.`,
         "blocked",
       );
       this.addEvent(
         mission,
-        "Rain",
+        localPaymentSimulation ? "Local scoped-card policy" : "Rain",
         localPaymentSimulation ? "Archive purchase simulated" : "Negotiated archive quote sandbox-settled",
         localPaymentSimulation
-          ? `Local scoped-card policy simulated the $${(quote.amountMinor / 100).toFixed(2)} archive allocation at MCC ${quote.mcc}. $0.00 was charged.`
-          : `Scoped card •••• ${card.lastFour} sandbox-settled $${(quote.amountMinor / 100).toFixed(2)} at approved MCC ${quote.mcc}, bound to quote ${quote.quoteId.slice(0, 14)}…`,
+          ? `Local scoped-card policy simulated the ${formatMinor(quote.amountMinor, quote.currency)} archive allocation at MCC ${quote.mcc}. No money was charged.`
+          : `Scoped card •••• ${card.lastFour} sandbox-settled ${formatMinor(quote.amountMinor, quote.currency)} at approved MCC ${quote.mcc}, bound to quote ${quote.quoteId.slice(0, 14)}…`,
       );
       this.addEvent(
         mission,
         "Monad",
         this.monad.mode === "local" ? "Demo provider claim recorded" : "Provider claimed bounty",
         this.monad.mode === "local"
-          ? "Atlas Archive Node committed to recovery in the local ledger; no collateral or token moved."
+          ? "The simulated Atlas fixture provider was assigned in the local ledger; no provider endpoint was contacted and no collateral or token moved."
           : "Atlas Archive Node posted collateral and committed to recovery.",
       );
       return;
@@ -512,7 +622,14 @@ class LazarusOrchestrator {
       mission.status = "RECOVERING";
       mission.statusLabel = "Recovering pieces — 8 of 24";
       mission.availability = 34;
-      this.addEvent(mission, "Recovery agent", "First pieces recovered", "8 cryptographically addressed pieces received from the archive provider.");
+      this.addEvent(
+        mission,
+        this.recovery.mode === "local" ? "Local recovery fixture" : "Recovery provider",
+        "First pieces recovered",
+        this.recovery.mode === "local"
+          ? "8 cryptographically addressed pieces loaded from the bundled CC0 fixture; no external provider transferred data."
+          : "8 cryptographically addressed pieces received from the recovery provider.",
+      );
       return;
     }
 
@@ -520,7 +637,14 @@ class LazarusOrchestrator {
       mission.pieces = await this.recovery.recoverThrough(mission.id, 16);
       mission.statusLabel = "Recovering pieces — 16 of 24";
       mission.availability = 58;
-      this.addEvent(mission, "Recovery agent", "Recovery passed halfway", "16 of 24 pieces received; each piece hash matches the manifest.");
+      this.addEvent(
+        mission,
+        this.recovery.mode === "local" ? "Local recovery fixture" : "Recovery provider",
+        "Recovery passed halfway",
+        this.recovery.mode === "local"
+          ? "16 of 24 bundled fixture pieces loaded; each piece hash matches the manifest."
+          : "16 of 24 pieces received; each piece hash matches the manifest.",
+      );
       return;
     }
 
@@ -532,7 +656,12 @@ class LazarusOrchestrator {
       mission.verifiers[0].state = "passed";
       mission.verifiers[1].state = "passed";
       mission.audit.quorum = "2/2";
-      this.addEvent(mission, "Verifier mesh", "Random challenges passed", "North and East verifiers independently validated all challenged pieces.");
+      this.addEvent(
+        mission,
+        "Local verifier quorum",
+        "Scripted verification passed",
+        "North and East are local verifier roles in this demo; they checked the fixture pieces against the declared hashes without contacting independent services.",
+      );
       return;
     }
 
@@ -575,15 +704,19 @@ class LazarusOrchestrator {
       mission.budget.releasedMinor = release.totalReleasedMinor;
       mission.seeders = 2;
       mission.provider.state = "reseeding";
-      this.transition(mission, "RESEEDED", "Restored to two independent seeders");
+      this.transition(
+        mission,
+        "RESEEDED",
+        this.recovery.mode === "local" ? "Demo modeled two local replicas" : "Restored to two independent seeders",
+      );
       mission.availability = 100;
       this.addChainTransaction(mission, release);
       this.addEvent(
         mission,
         "Recovery network",
-        "Artifact resurrected",
+        this.recovery.mode === "local" ? "Demo replicas modeled" : "Artifact resurrected",
         this.monad.mode === "local"
-          ? "Availability changed from zero to two complete seeders; the local ledger recorded the retention milestone."
+          ? "The demo modeled two complete replicas and recorded the retention milestone locally; no external seeding network was contacted."
           : "Availability changed from zero to two complete seeders; retention tranche released.",
       );
       return;
@@ -600,14 +733,21 @@ class LazarusOrchestrator {
       if (mission.rainCard?.state === "expiry_scheduled") {
         this.addEvent(mission, "Rain", "Scoped card expiration scheduled", "Application payment authority was disabled; the Rain sandbox card remains bounded by its short remote expiry because the public sandbox exposes no cancel endpoint.");
       } else {
-        this.addEvent(mission, "Rain", "Scoped card retired", "Payment authority removed immediately after mission completion.");
+        this.addEvent(
+          mission,
+          "Rain",
+          this.rain.mode === "local" ? "Simulated card retired" : "Scoped card retired",
+          this.rain.mode === "local"
+            ? "The local card-policy simulation removed its demo authority; no real card existed."
+            : "Payment authority removed immediately after mission completion.",
+        );
       }
       this.addEvent(
         mission,
         "Lazarus Mesh",
         "Mission completed",
         this.monad.mode === "local"
-          ? "Dead data is live again. Demo allocations, proofs, and recovery receipts reconciled with $0.00 charged."
+          ? "The bundled-fixture recovery simulation completed. Demo allocations, scripted proofs, and local receipts reconciled with $0.00 charged."
           : "Dead data is live again. Payment, proof, and recovery receipts reconciled.",
       );
     }
@@ -620,17 +760,18 @@ class LazarusOrchestrator {
       error.statusCode = 409;
       throw error;
     }
+    const challengeAmountMinor = fromAccountingMinorUp(25_000, mission.budget.currency);
     const result = await this.rain.authorizePurchase(mission.rainCard.cardId, {
       merchantId: "merchant_unapproved",
       merchantName: "Unapproved Merchant",
       mcc: "7995",
-      amountMinor: 25_000,
-      currency: "USD",
+      amountMinor: challengeAmountMinor,
+      currency: mission.budget.currency,
     });
     mission.payments.unshift(result);
     mission.transactions.unshift({
       id: result.transactionId,
-      rail: "Rain scoped card",
+      rail: this.rain.mode === "local" ? "Local scoped-card policy" : "Rain sandbox scoped card",
       operation: "manual policy challenge",
       status: result.status,
       amountMinor: result.amountMinor,
@@ -638,7 +779,13 @@ class LazarusOrchestrator {
       timestamp: result.checkedAt,
       reason: result.code,
     });
-    this.addEvent(mission, "Rain", "Policy challenge blocked", `$250.00 purchase rejected: ${result.code}.`, "blocked");
+    this.addEvent(
+      mission,
+      this.rain.mode === "local" ? "Local scoped-card policy" : "Rain",
+      "Policy challenge blocked",
+      `${formatMinor(challengeAmountMinor, mission.budget.currency)} purchase rejected: ${result.code}.`,
+      "blocked",
+    );
     this.store.save();
     this.publish();
     return result;

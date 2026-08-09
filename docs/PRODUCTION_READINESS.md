@@ -1,84 +1,118 @@
-# Lazarus Mesh production-readiness boundary
+# Lazarus Mesh Production-Readiness Boundary
 
 Updated: 2026-08-08
 
 ## Executive status
 
-Lazarus Mesh is a deployment-ready, production-shaped hybrid sandbox, not a production payment or recovery service. The application now reports that boundary directly in its API and UI instead of treating every configured rail as live.
+Lazarus Mesh is a deployment-ready public demo plus access-controlled sandbox/testnet integration paths. It is **not** a production payment, foreign-exchange, wallet, marketplace, or recovery service.
 
 | Component | Executed today | Production boundary |
 | --- | --- | --- |
-| Rain | Authenticated Rain sandbox calls for collateral simulation, scoped-card issuance, authorization simulation, settlement simulation, reversal, and card lookup | No production card program, card-network checkout, webhook reconciliation, refunds, or remote freeze/close |
-| Monad | Local deterministic bounty ledger plus read-only testnet RPC readiness | No signed transaction, deployed registry call, receipt polling, replacement, or reorg handling |
-| x402 | Local 402 requirement/receipt plus read-only facilitator capability probe | No payer signature, `PAYMENT-SIGNATURE`, facilitator verification, facilitator settlement, or `PAYMENT-RESPONSE` validation |
-| Bargaining | Deterministic, policy-bounded local offers and counteroffers | No authenticated merchant session or merchant-signed binding quote |
-| Recovery | Real hashing, piece verification, reconstruction, and root validation over the bundled CC0 fixture | No external provider transfer, durable storage, independent verifier service, or persistent reseeding |
+| Mission currencies | Fixed-reference accounting in USD, EUR, GBP, CAD, and AUD | No live FX feed, conversion, custody, fee/spread disclosure, refund FX, or financial ledger |
+| Rain | Local simulation or authenticated Rain sandbox calls for rUSD collateral setup, scoped-card issuance, authorization simulation, settlement simulation, reversal, and status lookup | USD-only hackathon sandbox; no production card program, signed webhooks, disputes/refunds, or immediate remote freeze/close |
+| Monad x402 | x402-shaped local simulation, or opt-in bounded x402 v2 test-USDC buyer on Monad testnet | Testnet path only; requires a dedicated payer, distinct payee, HTTPS seller, durable payment-ID uniqueness, and reconciliation |
+| Monad bounty | Local deterministic bounty ledger | `RecoveryBountyRegistry.sol` is not compiled, deployed, called, or audited by the app |
+| Bargaining | Deterministic policy-bounded local offers/counters and binding-quote validation | No authenticated merchant session or merchant-signed binding quote |
+| Recovery | Real hashing, piece verification, reconstruction, and root validation over the bundled CC0 fixture | No external provider transfer, durable artifact storage, independent verifier service, or persistent reseeding |
 
-The Vercel deployment is backed by a free managed Neon Postgres database. It stores one versioned JSONB audit-state snapshot, reloads that snapshot before every serverless request, and persists successful mutations with an optimistic revision check. The deterministic local Rain, Monad, x402, negotiation, and recovery adapters are rebuilt from that snapshot on each request, so an interrupted Vercel instance can continue a local-demo mission on its next request.
+The public Vercel deployment uses free managed Neon Postgres for a versioned JSONB audit-state snapshot. It reloads that state before each request and rehydrates deterministic local adapters. That supports a durable public **local demo**; it is not an external-operation ledger.
 
-This fixes the old filesystem-only deployment blocker but deliberately does **not** make any external financial rail live. Vercel runs only `ADAPTER_MODE=local`; it rejects `rain-sandbox` configuration. Browser mutations require a same-origin browser request, and the deployed UI polls state instead of retaining a serverless SSE connection. There is still no user authentication, tenancy, RBAC, rate limiting, or webhook/reconciliation saga, so the deployment must not receive real funds or production credentials.
+Vercel explicitly rejects `ADAPTER_MODE` other than `local` and `MONAD_EXECUTION_MODE` other than `local`. It must not receive Rain credentials, payer keys, production cards, real funds, or live financial traffic. Browser mutations require same-origin requests, but the app still has no user authentication, tenant isolation, RBAC, rate limiting, or production reconciliation.
 
-`ADAPTER_MODE=rain-sandbox` therefore means **Rain sandbox writes with local execution everywhere else**. It does not mean production, real-money settlement, or Monad testnet writes.
+## Currency boundary
+
+The mission selector supports USD, EUR, GBP, CAD, and AUD through the fixed `lazarus-demo-reference-v1` table. Those values are deterministic demo references, not current market rates. Required reserves and debits round conservatively.
+
+Accounting currency is separate from settlement asset:
+
+- local adapters simulate all value;
+- Rain sandbox missions must use USD and collateral setup uses sandbox rUSD;
+- opt-in Monad x402 settles official Monad test USDC; its EIP-3009 buyer authorization is gasless, while the submitting seller/facilitator uses MON for gas; and
+- the local Monad bounty records selected mission currency plus synthetic settlement references without moving tokens.
+
+Supporting a production multi-currency product would require provider-supported settlement currencies, authoritative FX sources, price-lock windows, fee/spread disclosures, rounding policy, treasury/custody, refunds, disputes, tax/accounting treatment, and end-to-end reconciliation.
+
+## Runtime modes and truth labels
+
+| Configuration | External action possible | Required label |
+| --- | --- | --- |
+| `ADAPTER_MODE=local`, `MONAD_EXECUTION_MODE=local` | None during mission execution | Local deterministic demo |
+| `ADAPTER_MODE=rain-sandbox` | Rain sandbox writes | Hybrid sandbox; no real funds |
+| `MONAD_EXECUTION_MODE=x402-testnet` | Capped official test-USDC transfer on Monad testnet | Testnet x402 plus local bounty |
+| Both external selections | Rain sandbox calls plus capped Monad x402 testnet payment | Access-controlled integration demo; not production |
+| Public Vercel | External selections rejected | Public local-only demo |
+
+`MONAD_EXECUTION_MODE=x402-testnet` swaps only availability discovery. It does not activate the bounty registry, merchant API, provider network, verifier network, or reseeding service.
+
+Do not say a real transaction occurred unless a specific run produced a confirmed transaction hash and the exact official test-USDC `Transfer` was independently verified. The presence of configuration or a successful readiness probe is not transaction evidence.
 
 ## Mission-creation contract
 
-The mission form and API share these published limits through `state.system.missionCreation`:
+The mission form and API publish currency-specific limits through `state.system.missionCreation`. The USD reference limits are:
 
 - verified source: bundled 24-piece CC0 fixture;
-- minimum recovery-service spend cap: `$12.01`;
-- maximum recovery-service spend cap: `$5,000.00`;
-- provider reward range: `$1.00` to `$1,000.00`;
-- default recovery spend cap: `$20.00`;
-- default provider reward: `$5.00`.
+- minimum recovery-service spend cap: USD 12.01;
+- maximum recovery-service spend cap: USD 5,000.00;
+- provider reward range: USD 1.00 to USD 1,000.00;
+- default recovery spend cap: USD 20.00; and
+- default provider reward: USD 5.00.
 
-The recovery-service cap and provider bounty are separate commitments. Maximum authorized exposure is their sum. The `$12.01` service reserve is `$12.00` for the maximum local archive quote plus `$0.01` for x402-style discovery. The normal deterministic bargain settles the archive quote at `$9.75`, so the demonstrated service spend is `$9.76`.
+The service cap and provider bounty are separate commitments. The USD 12.01 reserve covers the USD 12.00 maximum local archive quote plus a one-cent discovery reference. The successful local bargain is USD 9.75, so the default demonstrated service accounting is USD 9.76. Other mission currencies use deterministic reference equivalents.
 
-Mission creation now fails closed when a client submits a different content root, piece count, or license. Earlier builds ignored those fields while still recovering the fixture, which could mislabel the artifact.
+Mission creation fails closed for unsupported currencies, rights, content root, piece count, license, budget, or reward. Rain sandbox additionally rejects non-USD missions.
 
-## Configuration readiness
+## Capped x402 testnet prerequisites
 
-The checked local environment currently has:
+Before setting `MONAD_EXECUTION_MODE=x402-testnet`:
 
-- complete, syntactically valid Rain sandbox configuration;
-- Monad testnet RPC configuration;
-- Monad testnet USDC configuration;
-- an x402 facilitator origin;
-- no Monad signer;
-- no deployed bounty-registry address;
-- no x402 pay-to address;
-- no live merchant-negotiation endpoint;
-- no network recovery-provider or persistent reseeding service.
+1. Rotate every credential that has appeared in chat, logs, screenshots, or a commit.
+2. Use a dedicated low-value payer key in an access-controlled local runtime.
+3. Fund the payer with only the required official Monad test USDC. Confirm the submitting seller/facilitator can fund MON gas; do not require MON in the buyer wallet unless that service explicitly does.
+4. Configure a distinct payee wallet; payer and payee must not be the same.
+5. Use a credential-free HTTPS Monad RPC and HTTPS seller resource.
+6. Require the seller to return the exact x402 v2 requirement for `eip155:10143`, pinned official test USDC, configured payee, expected resource, expected price, and required payment identifier.
+7. Enforce durable uniqueness for the payment identifier on the seller and persist paid results. Exact duplicates must return the existing result without a second charge.
+8. Use the implemented durable buyer pending-payment record: it is written before signing/transmission and blocks reset, fresh startup, and repeat authorization. Reconcile and deliberately clear any unknown outcome before proceeding.
+9. Retain the settlement response, transaction hash, confirmation evidence, exact token `Transfer` log, explorer link, and payment ID.
+10. Keep public Vercel in local mode.
 
-Secrets remain server-side. The local `.env` file is ignored by version control and is restricted to its owner. Because the Rain API credential was shared in chat, rotate it before a production or externally shared deployment. Do not place production signing keys in `.env`; use a managed signer or secret manager.
+The current adapter performs fail-closed requirement validation, amount/asset/network/payee/resource checks, payer balance checks, a durable pre-sign pending-payment gate, bounded signing, stable payment identifiers, response limits, confirmation waiting, and independent receipt-log verification. Those controls make the testnet demo bounded; they do not provide an automated operator reconciliation/clearance workflow or normalized production ledger.
 
-## Required path to a testnet-live release
+## Crash-safety and idempotency boundary
 
-1. Add a distinct `testnet-live` mode. Never silently promote `rain-sandbox` to live execution.
-2. Replace the current single-snapshot demo persistence with normalized transactional missions, external-operation attempts, idempotency records, receipts, and reconciliation state. The current Neon snapshot is sufficient only for deterministic local adapters.
-3. Compile, test, audit, deploy, and verify `RecoveryBountyRegistry.sol` on Monad testnet.
-4. Use a managed signer/custody boundary. Simulate every transaction, enforce fee and nonce policy, wait for confirmations, and reconcile replacement or reorg events.
-5. Implement the x402 v2 buyer flow against an allowlisted resource: validate the 402 requirements, network, token, payee, amount, expiry, and resource; sign the authorization; retry with `PAYMENT-SIGNATURE`; validate `PAYMENT-RESPONSE` and the onchain settlement.
-6. Replace the deterministic Atlas merchant with an authenticated negotiation API whose binding quote is signed or authenticated independently of this process.
-7. Use a Rain-supported PCI-safe checkout/token handoff and issuer-level controls. Add signed webhooks, replay protection, transaction reconciliation, reversals/refunds, disputes, and a real freeze/close lifecycle.
-8. Add authenticated provider streaming, manifest ingestion, durable artifact storage, independent verifier services, persistent reseeding, and ongoing availability evidence.
-9. Add user authentication, tenant isolation, RBAC, rate limits, audit-log retention, alerting, and incident runbooks.
-10. Run a capped testnet pilot before any mainnet or production-card onboarding.
+Every external operation must be a resumable saga:
 
-## Crash-safety requirements
+1. durably create a pending operation before signing or sending;
+2. assign a stable idempotency/payment identifier;
+3. persist remote identifiers and receipts immediately;
+4. reconcile before retrying a timeout or ambiguous response;
+5. make seller-side payment identifiers globally unique; and
+6. test process termination after every external mutation.
 
-The orchestrator must treat external work as a resumable saga, not a single in-memory function call. Persist an operation record before each external mutation, use a stable idempotency key, store the remote identifier immediately, and reconcile before retrying. Test process termination after every Rain, Monad, x402, merchant, and storage mutation.
+The local CLI snapshot durably stores the x402 pending-payment gate before signing and restores the fail-closed block after restart. It and the Vercel JSONB demo snapshot are still not normalized external-operation journals, and the public Vercel runtime disables live x402. The Rain sandbox path similarly checkpoints known card/authorization state and blocks destructive replacement while recorded card authority may remain live. Neither path is a complete automated webhook/reconciliation saga.
 
-Sandbox reset and startup now preserve the remote-authority boundary: an unexpired Rain sandbox card recorded as `active` or `expiry_scheduled` blocks destructive reset/startup state replacement until its recorded expiry.
+## Required path to a production release
+
+1. Replace snapshot persistence with normalized transactional missions, operation attempts, idempotency records, receipts, reconciliation state, and append-only audit events.
+2. Add authentication, tenant isolation, RBAC, rate limits, quotas, telemetry redaction, backups, incident response, and managed secret/custody boundaries.
+3. Add signed Rain webhooks with replay protection, transaction reconciliation, refunds/reversals, disputes, and a real freeze/close lifecycle; complete production issuer/compliance onboarding.
+4. Compile, test, fuzz, audit, deploy, and verify `RecoveryBountyRegistry.sol`; implement a separate Monad writer with chain/code checks, simulation, nonce/fee policy, confirmation, replacement, reorg, dispute, and restart reconciliation.
+5. Operate a durable x402 seller/facilitator boundary and buyer reconciliation system; test duplicate, unknown-outcome, outage, wrong-chain/token/payee/amount, expiry, and insufficient-funds cases.
+6. Replace the local Atlas merchant with an authenticated negotiation API whose binding quote is independently signed/verifiable.
+7. Add authenticated provider streaming, signed manifests, isolated recovery workers, malware/content controls, durable artifact storage, independent verifier services, persistent reseeding, and ongoing availability evidence.
+8. Define and obtain approval for the complete multi-currency/FX, fee, refund, custody, disclosure, accounting, and compliance model.
+9. Run capped sandbox/testnet pilots before any mainnet or production-card use.
 
 ## Go-live tests
 
-- Solidity unit, invariant, fuzz, fork, and malicious-token tests;
-- multi-actor Monad testnet lifecycle and reorg/replacement tests;
-- Rain sandbox contract tests plus signed-webhook replay and reordering tests;
-- x402 wrong-chain, wrong-token, wrong-payee, overprice, expiry, duplicate-settlement, facilitator-outage, and insufficient-funds tests;
-- merchant quote identity, signature, replay, expiry, and term-tampering tests;
-- provider corruption, truncation, timeout, partial-failure, and reseeding-availability tests;
-- crash/restart tests after every external mutation;
+- multi-currency rounding, limit, refund, and reconciliation properties;
+- Solidity unit, invariant, fuzz, fork, malicious-token, deadline, dispute, and replay tests;
+- Monad nonce, fee, confirmation, replacement, and reorg tests;
+- x402 wrong-chain, wrong-token, wrong-payee, overprice, expiry, duplicate, unknown-outcome, seller/facilitator outage, and insufficient-funds tests;
+- Rain sandbox/production contract tests plus signed-webhook replay and reordering tests;
+- merchant identity, signature, replay, expiry, and term-tampering tests;
+- provider corruption, truncation, timeout, partial failure, and reseeding-availability tests;
+- crash/restart tests after every external mutation; and
 - authentication, tenant-boundary, SSRF, payment-drain, custody, and card-data security reviews.
 
 ## Current protocol references
@@ -89,4 +123,4 @@ Sandbox reset and startup now preserve the remote-authority boundary: an unexpir
 - [x402 v2 client/server flow](https://docs.cdp.coinbase.com/x402/core-concepts/how-it-works)
 - [x402 facilitator responsibilities](https://docs.cdp.coinbase.com/x402/core-concepts/facilitator)
 
-Monad mainnet uses chain ID `143`; this project intentionally targets testnet chain ID `10143` until the live-write prerequisites above are complete.
+Monad mainnet uses chain ID `143`; this project intentionally pins the live x402 adapter to testnet chain ID `10143`. See [Hackathon Acceptance and Currency Model](HACKATHON_ACCEPTANCE_AND_CURRENCY.md) for the concise demo truth table and [API and Testnet Integration Guide](API_INTEGRATION.md) for exact configuration.

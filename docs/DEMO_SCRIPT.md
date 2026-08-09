@@ -2,12 +2,15 @@
 
 ## Before presenting
 
-Choose and state the mode accurately:
+Rain and Monad x402 are independent switches. Choose and state the exact mode:
 
-- `ADAPTER_MODE=local`: every payment and chain action is a local simulation; `$0.00` is charged.
-- `ADAPTER_MODE=rain-sandbox`: Rain calls the external sandbox; bargaining, Monad execution, and x402 execution remain local. Configured Monad RPC and facilitator checks are read-only.
+- `ADAPTER_MODE=local` and `MONAD_EXECUTION_MODE=local`: every payment and chain action is simulated; `$0.00` is charged.
+- `ADAPTER_MODE=rain-sandbox`: Rain uses its external sandbox. This does not enable Monad writes.
+- `MONAD_EXECUTION_MODE=x402-testnet`: a server-side payer signs one capped EIP-3009 authorization and the configured x402 seller/facilitator settles the discovery fee in **test USDC** on Monad testnet. The app requires a confirmed chain receipt. The bounty, bargaining merchant, provider, verifiers, recovery bytes, and modeled reseeding remain local.
 
-In hybrid mode, confirm `/api/health` reports Rain authenticated before starting. Do not describe sandbox transactions as real money, and complete the mission before attempting a reset.
+The public Vercel deployment forces both execution modes to `local`; live sandbox/testnet modes are available only in an explicitly configured, access-controlled Node runtime. In Rain sandbox mode, confirm `/api/health` reports Rain authenticated. Never describe sandbox or testnet assets as production money.
+
+The mission accounting selector supports USD, EUR, GBP, CAD, and AUD using fixed demo reference rates, not live FX. Use USD for the timings and amounts below. Rain sandbox accepts USD missions only; local execution supports all five accounting currencies. Monad settlement remains test USDC regardless of the selected accounting currency.
 
 ## 0:00–0:25 — The problem
 
@@ -30,7 +33,9 @@ Select **Run full recovery**.
 
 ## 0:50–1:25 — Discovery and bargaining
 
-Point to the local x402 availability handshake and its `$0.01` simulated allocation.
+In local Monad mode, point to the x402 availability handshake and its `$0.01` simulated allocation.
+
+In `x402-testnet` mode, show the real `0.01` test-USDC settlement, confirmed transaction hash, and Monad explorer link. The buyer's EIP-3009 authorization is gasless: the facilitator or other chain submitter needs MON for gas. Lazarus does not check or estimate that submitter's MON balance.
 
 Open the deal transcript:
 
@@ -50,7 +55,7 @@ Show the `$5.00` demo bounty and the provider's `$2.00` simulated collateral req
 
 Say explicitly:
 
-“This release executes the bounty on the local Monad ledger. If the public RPC and x402 facilitator are configured, health checks verify Monad testnet chain 10143 and x402 v2 support, but they never sign or settle a transaction.”
+“The recovery bounty, provider claim, attestations, and 70/90/100 releases use the local Monad ledger in every current mode. The optional Monad testnet write is only the separate x402 discovery payment; it does not make the provider or bounty live.”
 
 ## 1:50–2:25 — Rain-controlled purchase
 
@@ -62,6 +67,8 @@ In `rain-sandbox` mode:
 
 “The server uses the authenticated Rain sandbox to simulate rUSD collateral funding, create a scoped card, exercise authorization controls, and settle the approved authorization. Encrypted PAN and CVC data are discarded immediately.”
 
+Rain sandbox is USD-only. Demonstrate EUR, GBP, CAD, or AUD with local Rain execution, or switch the mission back to USD before enabling the Rain sandbox.
+
 Show two outcomes:
 
 - an in-limit `$9.00` unrelated merchant/category attempt is declined and costs nothing;
@@ -71,7 +78,7 @@ Explain the enforcement split accurately:
 
 “Lazarus policy binds the exact merchant, quote, purpose, one-use rule, and `$9.75` amount. The public Rain sandbox scoped-card fields enforce amount-with-buffer, MCC, and expiry. Rain's default 1.2× buffer can make the remote ceiling `$11.70`, so the exact quote remains an application-level invariant.”
 
-The mission's policy usage is now exactly `$9.76`: `$0.01` discovery plus `$9.75` archive access. In local mode this is simulated accounting and the screen explicitly shows `$0.00 charged`; the `$5.00` demo bounty is tracked separately.
+For the USD script, mission policy usage is exactly `$9.76`: `$0.01` discovery plus `$9.75` archive access. In local x402 mode both are simulated accounting. In `x402-testnet` mode the discovery cent represents `0.01` test USDC actually settled onchain, while the `$9.75` archive purchase remains local unless Rain sandbox is independently enabled. The `$5.00` demo bounty is tracked separately and remains local.
 
 ## 2:25–3:15 — Recover and verify
 
@@ -94,7 +101,7 @@ In local mode, the card retires immediately. In Rain sandbox mode, Lazarus disab
 
 ## 3:40–4:00 — Close
 
-“Rain models bounded access to the existing card ecosystem. Monad models the open recovery market and proof-conditioned rewards. This hosted demo keeps Rain, Monad, and x402 execution local and auditable, so no real funds move while everyone can see the recovery flow.”
+“Rain models bounded access to the existing card ecosystem. Monad models the open recovery market and proof-conditioned rewards. The public Vercel demo keeps execution local and auditable. An access-controlled Node run can independently demonstrate a confirmed, capped test-USDC x402 discovery payment without pretending that the bounty, merchant, provider, verifiers, or reseeding are live.”
 
 Closing line:
 

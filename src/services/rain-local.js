@@ -1,4 +1,5 @@
 const { localId } = require("../lib/ids");
+const { normalizeCurrency } = require("../domain/currency");
 
 function isNonemptyStringArray(value) {
   return Array.isArray(value) && value.length > 0 && value.every(
@@ -29,6 +30,10 @@ class LocalRainAdapter {
     if (!policy?.missionId || !policy?.principalId) {
       throw new RainPolicyError("INVALID_POLICY", "Mission and principal are required.");
     }
+    const currency = normalizeCurrency(policy.currency);
+    if (!currency) {
+      throw new RainPolicyError("CURRENCY_NOT_SUPPORTED", "The scoped-card currency is not supported.");
+    }
     if (!Number.isSafeInteger(policy.maximumAmountMinor) || policy.maximumAmountMinor <= 0) {
       throw new RainPolicyError("INVALID_POLICY", "Maximum amount must be positive integer minor units.");
     }
@@ -57,6 +62,7 @@ class LocalRainAdapter {
       allowedMerchantIds: Object.freeze([...policy.allowedMerchantIds]),
       allowedMccs: Object.freeze([...policy.allowedMccs]),
       maximumAmountMinor: policy.maximumAmountMinor,
+      currency,
       maxTransactions: policy.maxTransactions,
       transactionCount: 0,
       expiresAt: policy.expiresAt,
@@ -64,6 +70,10 @@ class LocalRainAdapter {
       quoteId: policy.quoteId || null,
       createdAt,
       mode: "local",
+      rail: "local_scoped_card_simulation",
+      synthetic: true,
+      fundsMoved: false,
+      externalEndpoint: false,
       enforcement: {
         amount: "local-policy-exact",
         mcc: "local-policy",
@@ -87,6 +97,7 @@ class LocalRainAdapter {
     if (!card) code = "CARD_NOT_FOUND";
     else if (card.state !== "active") code = "CARD_INACTIVE";
     else if (!Number.isSafeInteger(purchaseIntent.amountMinor) || purchaseIntent.amountMinor <= 0) code = "INVALID_AMOUNT";
+    else if (normalizeCurrency(purchaseIntent.currency || card.currency) !== card.currency) code = "CURRENCY_MISMATCH";
     else if (new Date(card.expiresAt).getTime() <= this.clock().getTime()) code = "CARD_EXPIRED";
     else if (card.transactionCount >= card.maxTransactions) code = "TRANSACTION_COUNT_EXCEEDED";
     else if (purchaseIntent.amountMinor > card.maximumAmountMinor) code = "AMOUNT_LIMIT_EXCEEDED";
@@ -100,7 +111,7 @@ class LocalRainAdapter {
     if (authorized) card.transactionCount += 1;
 
     return {
-      transactionId: localId("rain_tx", cardId, purchaseIntent.merchantId, purchaseIntent.amountMinor, checkedAt),
+      transactionId: localId("rain_tx", cardId, purchaseIntent.merchantId, purchaseIntent.amountMinor, card?.currency || purchaseIntent.currency, checkedAt),
       cardId,
       authorized,
       status: authorized && purchaseIntent.settle !== false ? "settled" : authorized ? "authorized" : "declined",
@@ -109,10 +120,14 @@ class LocalRainAdapter {
       merchantName: purchaseIntent.merchantName,
       mcc: purchaseIntent.mcc,
       amountMinor: purchaseIntent.amountMinor,
-      currency: purchaseIntent.currency || "USD",
+      currency: card?.currency || normalizeCurrency(purchaseIntent.currency) || "USD",
       checkedAt,
       quoteId: purchaseIntent.quoteId || null,
       mode: "local",
+      rail: "local_scoped_card_simulation",
+      synthetic: true,
+      fundsMoved: false,
+      externalEndpoint: false,
     };
   }
 
@@ -141,6 +156,9 @@ class LocalRainAdapter {
     }
     if (!Number.isSafeInteger(card.maxTransactions) || card.maxTransactions <= 0) {
       throw new RainPolicyError("INVALID_RESTORED_CARD", "Stored transaction count limit is invalid.");
+    }
+    if (!normalizeCurrency(card.currency)) {
+      throw new RainPolicyError("INVALID_RESTORED_CARD", "Stored card currency is invalid.");
     }
     this.cards.set(card.cardId, structuredClone({
       ...card,

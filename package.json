@@ -2,7 +2,7 @@
   "name": "lazarus-mesh",
   "version": "0.1.0",
   "private": true,
-  "description": "Local-first autonomous recovery marketplace demo powered by Rain and Monad adapters.",
+  "description": "Recovery marketplace with multi-currency demo accounting and opt-in Rain sandbox and Monad x402 testnet adapters.",
   "main": "server.js",
   "type": "commonjs",
   "scripts": {
@@ -16,6 +16,10 @@
   },
   "license": "MIT",
   "dependencies": {
-    "@neondatabase/serverless": "^1.1.0"
+    "@neondatabase/serverless": "^1.1.0",
+    "@x402/core": "^2.21.0",
+    "@x402/evm": "^2.21.0",
+    "@x402/extensions": "^2.21.0",
+    "viem": "^2.55.11"
   }
 }

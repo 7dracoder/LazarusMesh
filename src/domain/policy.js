@@ -18,6 +18,8 @@ const POLICY_REASON_CODES = Object.freeze([
   'RECIPIENT_NOT_ALLOWED',
   'MCC_NOT_ALLOWED',
   'PURPOSE_NOT_ALLOWED',
+  'CURRENCY_NOT_ALLOWED',
+  'BUDGET_CURRENCY_MISMATCH',
   'RAIL_NOT_ALLOWED',
   'TOO_MANY_TRANSACTIONS',
   'PER_TRANSACTION_LIMIT_EXCEEDED',
@@ -41,6 +43,8 @@ const REASON_TEXT = Object.freeze({
   RECIPIENT_NOT_ALLOWED: 'The payment recipient is not allowed by policy.',
   MCC_NOT_ALLOWED: 'The merchant category is not allowed by policy.',
   PURPOSE_NOT_ALLOWED: 'The purchase purpose is not allowed by policy.',
+  CURRENCY_NOT_ALLOWED: 'The payment currency does not match the mission policy.',
+  BUDGET_CURRENCY_MISMATCH: 'The payment, usage, and mission budget must use the same currency.',
   RAIL_NOT_ALLOWED: 'The selected payment rail is not allowed by policy.',
   TOO_MANY_TRANSACTIONS: 'The policy transaction-count limit has been reached.',
   PER_TRANSACTION_LIMIT_EXCEEDED: 'The payment exceeds the per-transaction limit.',
@@ -273,6 +277,33 @@ function evaluatePolicy(input, intentArgument, contextArgument = {}) {
     !allowedBy(policy.allowedPurposes, intent.purpose)
   ) {
     return result('PURPOSE_NOT_ALLOWED', { purpose: intent.purpose });
+  }
+
+  if (
+    policy.allowedCurrencies !== undefined &&
+    !allowedBy(policy.allowedCurrencies, intent.currency || '')
+  ) {
+    return result('CURRENCY_NOT_ALLOWED', { currency: intent.currency || null });
+  }
+
+  const budgetCurrency = typeof mission.budget?.currency === 'string'
+    ? mission.budget.currency.trim().toUpperCase()
+    : null;
+  const intentCurrency = typeof intent.currency === 'string'
+    ? intent.currency.trim().toUpperCase()
+    : null;
+  const usageCurrency = typeof usage.currency === 'string'
+    ? usage.currency.trim().toUpperCase()
+    : budgetCurrency;
+  if (
+    budgetCurrency &&
+    (intentCurrency !== budgetCurrency || usageCurrency !== budgetCurrency)
+  ) {
+    return result('BUDGET_CURRENCY_MISMATCH', {
+      budgetCurrency,
+      intentCurrency,
+      usageCurrency,
+    });
   }
 
   const transactionCount = firstDefined(usage, ['transactionCount', 'settledTransactionCount']) ??

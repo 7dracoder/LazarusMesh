@@ -61,6 +61,10 @@ function bindingQuote(overrides = {}) {
 
 test('local negotiation deterministically turns a $12 ask into an accepted $9.75 quote', () => {
   const negotiation = new LocalNegotiationAdapter({ clock });
+  assert.equal(negotiation.liveMerchantApi, false);
+  assert.equal(negotiation.merchantAuthenticated, false);
+  assert.equal(negotiation.merchantSignedQuotes, false);
+  assert.equal(negotiation.merchant.merchantId, ATLAS.merchantId);
   const offers = negotiation.getOffers({
     missionId: 'mission-test',
     contentRoot: 'sha256:rainfall-test-root',
@@ -75,6 +79,10 @@ test('local negotiation deterministically turns a $12 ask into an accepted $9.75
   assert.equal(offers.offers.length, 1);
   assert.equal(offers.offers[0].amountMinor, 1200);
   assert.equal(offers.offers[0].binding, false);
+  assert.equal(offers.offers[0].source, 'simulated');
+  assert.equal(offers.offers[0].merchantAuthenticated, false);
+  assert.equal(offers.source, 'simulated');
+  assert.equal(offers.externalEndpoint, false);
 
   const accepted = negotiation.sendCounterOffer({
     sessionId: offers.sessionId,
@@ -97,6 +105,11 @@ test('local negotiation deterministically turns a $12 ask into an accepted $9.75
   assert.equal(accepted.session.status, 'quote_ready');
   assert.equal(accepted.quote.amountMinor, 975);
   assert.equal(accepted.quote.binding, true);
+  assert.equal(accepted.quote.source, 'simulated');
+  assert.equal(accepted.quote.merchantAuthenticated, false);
+  assert.equal(accepted.quote.merchantSigned, false);
+  assert.equal(accepted.session.rounds[0].buyer.source, 'local-policy');
+  assert.equal(accepted.session.rounds[0].seller.source, 'simulated-merchant-model');
   assert.equal(accepted.quote.expiresAt, '2026-08-08T16:15:00.000Z');
   assert.equal(accepted.quote.quoteDigest, createQuoteDigest(accepted.quote));
 

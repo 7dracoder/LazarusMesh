@@ -3,16 +3,33 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { randomUUID } = require("node:crypto");
 const { JsonStore } = require("./src/store");
-const { loadEnvFile, monadNetworkConfig, monadReadiness, rainSandboxConfig } = require("./src/config");
+const {
+  loadEnvFile,
+  monadNetworkConfig,
+  monadReadiness,
+  monadX402Config,
+  rainSandboxConfig,
+} = require("./src/config");
 const { LocalRainAdapter } = require("./src/services/rain-local");
 const { RainSandboxAdapter } = require("./src/services/rain-sandbox");
 const { LocalMonadAdapter } = require("./src/services/monad-local");
 const { probeMonadNetwork } = require("./src/services/monad-network");
 const { LocalX402Adapter } = require("./src/services/x402-local");
+const { MonadX402Adapter } = require("./src/services/x402-monad");
 const { LocalNegotiationAdapter } = require("./src/services/negotiation-local");
 const { LocalRecoveryAdapter } = require("./src/services/recovery-local");
 const { createDefaultState, createMission } = require("./src/demo-state");
 const { LazarusOrchestrator } = require("./src/orchestrator");
+const { potentiallyLiveRainSandboxCard } = require("./src/domain/authority");
+const {
+  RATE_SET_ID,
+  currencyInfo,
+  fromAccountingMinorUp,
+  maximumDisplayMinor,
+  minimumDisplayMinor,
+  normalizeCurrency,
+  publicCurrencyConfig,
+} = require("./src/domain/currency");
 
 const ROOT = __dirname;
 if (require.main === module) loadEnvFile(path.join(ROOT, ".env"));
@@ -38,7 +55,32 @@ const MISSION_CREATION_POLICY = Object.freeze({
   discoveryReserveMinor: 1,
   pieceCount: 24,
   license: "CC0-1.0",
+  currencyConfig: publicCurrencyConfig(),
 });
+
+function missionCurrencyLimits(currency) {
+  return {
+    minimumBudgetMinor: minimumDisplayMinor(MISSION_CREATION_POLICY.minimumBudgetMinor, currency),
+    maximumBudgetMinor: maximumDisplayMinor(MISSION_CREATION_POLICY.maximumBudgetMinor, currency),
+    defaultBudgetMinor: fromAccountingMinorUp(MISSION_CREATION_POLICY.defaultBudgetMinor, currency),
+    minimumRewardMinor: minimumDisplayMinor(MISSION_CREATION_POLICY.minimumRewardMinor, currency),
+    maximumRewardMinor: maximumDisplayMinor(MISSION_CREATION_POLICY.maximumRewardMinor, currency),
+    defaultRewardMinor: fromAccountingMinorUp(MISSION_CREATION_POLICY.defaultRewardMinor, currency),
+    archiveReserveMinor: fromAccountingMinorUp(MISSION_CREATION_POLICY.archiveReserveMinor, currency),
+    discoveryReserveMinor: fromAccountingMinorUp(MISSION_CREATION_POLICY.discoveryReserveMinor, currency),
+  };
+}
+
+function formatMinor(amountMinor, currency) {
+  const info = currencyInfo(currency);
+  if (!info || !Number.isSafeInteger(amountMinor)) return `${amountMinor} ${currency}`;
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency,
+    minimumFractionDigits: info.minorDigits,
+    maximumFractionDigits: info.minorDigits,
+  }).format(amountMinor / (10 ** info.minorDigits));
+}
 
 const CONTENT_TYPES = {
   ".html": "text/html; charset=utf-8",
@@ -183,52 +225,173 @@ function createApplication({
   allowRemoteHost = false,
   enableEventStream = true,
   runtime = "local",
+  persistState = async () => {},
 } = {}) {
   if (!["local", "rain-sandbox"].includes(adapterMode)) {
     throw new Error(`Unsupported ADAPTER_MODE: ${adapterMode}`);
   }
+  const configuredMonadExecution = env.MONAD_EXECUTION_MODE || "local";
+  if (!["local", "x402-testnet"].includes(configuredMonadExecution)) {
+    throw new Error(`Unsupported MONAD_EXECUTION_MODE: ${configuredMonadExecution}`);
+  }
+  let store;
+  const persistPendingX402Payment = async (pending) => {
+    if (!store) throw new Error("Mission state is not initialized.");
+    const mission = store.get().missions?.find((item) => item.id === pending.missionId);
+    if (
+      !mission ||
+      mission.contentRoot !== pending.contentRoot ||
+      mission.principal?.id !== pending.principalId ||
+      mission.budget?.currency !== pending.currency
+    ) {
+      const error = new Error("The x402 payment does not match the durable mission context.");
+      error.code = "X402_PENDING_PAYMENT_CONTEXT_MISMATCH";
+      error.statusCode = 409;
+      throw error;
+    }
+    const existing = mission.externalOperations?.x402Pending;
+    if (
+      existing &&
+      (existing.receiptId !== pending.receiptId || existing.paymentId !== pending.paymentId)
+    ) {
+      const error = new Error("Another x402 payment is already awaiting reconciliation.");
+      error.code = "X402_RECONCILIATION_REQUIRED";
+      error.statusCode = 409;
+      throw error;
+    }
+    mission.externalOperations ||= {};
+    mission.externalOperations.x402Pending = structuredClone(pending);
+    store.save();
+    await persistState(store.get());
+  };
   const rain = adapterOverrides.rain || (adapterMode === "rain-sandbox"
     ? new RainSandboxAdapter(rainSandboxConfig(env))
     : new LocalRainAdapter());
   const monad = adapterOverrides.monad || new LocalMonadAdapter();
-  const x402 = adapterOverrides.x402 || new LocalX402Adapter();
+  const x402 = adapterOverrides.x402 || (configuredMonadExecution === "x402-testnet"
+    ? new MonadX402Adapter({
+      ...monadX402Config(env),
+      persistPendingPayment: persistPendingX402Payment,
+    })
+    : new LocalX402Adapter());
   const negotiation = adapterOverrides.negotiation || new LocalNegotiationAdapter();
   const recovery = adapterOverrides.recovery || new LocalRecoveryAdapter();
   const creationManifest = recovery.buildManifest(MISSION_CREATION_POLICY.pieceCount);
   const clients = new Set();
   const readiness = monadReadiness(env);
+  const x402Live = x402.mode === "monad-testnet" && x402.liveSettlementEnabled === true;
   const monadProbeConfig = monadNetworkConfig(env);
   const runMonadProbe = adapterOverrides.monadProbe || (() => probeMonadNetwork(monadProbeConfig));
+  const liveMerchantApi = negotiation.liveMerchantApi === true;
+  const merchantAuthenticated = liveMerchantApi && negotiation.merchantAuthenticated === true;
+  const merchantSignedQuotes = liveMerchantApi && negotiation.merchantSignedQuotes === true;
+  const merchantReady = liveMerchantApi && merchantAuthenticated && merchantSignedQuotes;
+  const networkedProviders = recovery.networkedProviders === true;
+  const externalVerifierNetwork = false;
+  const merchantProfile = negotiation.merchant || {
+    merchantId: "merchant_atlas_archive",
+    merchantName: "Atlas Archive Cloud",
+  };
   const system = {
-    mode: adapterMode === "rain-sandbox" ? "hybrid-sandbox" : "local",
+    mode: adapterMode === "rain-sandbox" || x402Live ? "hybrid-sandbox" : "local",
     rain: {
       mode: rain.mode || (adapterMode === "rain-sandbox" ? "rain-sandbox" : "local"),
       external: adapterMode === "rain-sandbox",
       sensitiveCardData: "discarded",
     },
     monad: {
-      mode: "local-ledger",
+      mode: x402Live ? "testnet-x402-plus-local-bounty" : "local-ledger",
       network: readiness.network,
       chainId: readiness.chainId,
       rpcConfigured: readiness.rpcConfigured,
       signerConfigured: readiness.signerConfigured,
       contractConfigured: readiness.contractConfigured,
-      writesEnabled: false,
+      writesEnabled: x402Live,
+      bountyWritesEnabled: false,
+      x402PaymentWritesEnabled: x402Live,
     },
     x402: {
-      mode: "local-handshake",
+      mode: x402Live ? "monad-testnet" : "local-handshake",
       network: readiness.network,
       facilitatorConfigured: readiness.facilitatorConfigured,
-      liveSettlementEnabled: false,
+      resourceConfigured: readiness.resourceConfigured,
+      liveSettlementEnabled: x402Live,
     },
     negotiation: {
       mode: negotiation.mode || "local-negotiation",
-      liveMerchantApi: false,
+      liveMerchantApi,
+      merchantAuthenticated,
+      merchantSignedQuotes,
+      ready: merchantReady,
+      communication: merchantReady
+        ? "authenticated-https"
+        : liveMerchantApi
+          ? "external-https-untrusted"
+          : "in-process-structured-messages",
     },
     recovery: {
-      mode: "verified-local-fixture",
-      networkedProviders: false,
+      mode: networkedProviders ? "external-provider-api" : "verified-local-fixture",
+      networkedProviders,
       persistentReseeding: false,
+    },
+    actors: {
+      mode: liveMerchantApi || networkedProviders ? "hybrid" : "local-simulation",
+      externalConnected: [merchantReady, networkedProviders, externalVerifierNetwork].filter(Boolean).length,
+      externalRequired: 3,
+      buyer: {
+        id: "lazarus_buyer_policy",
+        name: "Lazarus buyer policy",
+        role: "buyer-orchestrator",
+        kind: "deterministic-policy-workflow",
+        simulated: true,
+        connected: true,
+        externalEndpoint: false,
+        generativeChat: false,
+      },
+      merchant: {
+        id: merchantProfile.merchantId,
+        name: merchantProfile.merchantName,
+        role: "seller",
+        kind: liveMerchantApi ? "external-merchant-api" : "simulated-merchant-model",
+        simulated: !liveMerchantApi,
+        connected: liveMerchantApi,
+        ready: merchantReady,
+        authenticated: merchantAuthenticated,
+        signedQuotes: merchantSignedQuotes,
+        externalEndpoint: liveMerchantApi,
+      },
+      provider: {
+        id: "provider_atlas_archive",
+        name: "Atlas Archive Node",
+        role: "fulfillment-provider",
+        kind: networkedProviders ? "external-provider-api" : "bundled-fixture-provider",
+        simulated: !networkedProviders,
+        connected: networkedProviders,
+        externalEndpoint: networkedProviders,
+      },
+      verifiers: {
+        names: ["North Verifier", "East Verifier", "West Verifier"],
+        role: "verification-quorum",
+        kind: externalVerifierNetwork ? "external-verifier-network" : "scripted-local-quorum",
+        simulated: !externalVerifierNetwork,
+        connected: externalVerifierNetwork,
+        externalEndpoint: externalVerifierNetwork,
+      },
+      rails: {
+        names: ["Rain", "Monad", "x402"],
+        role: "payment-and-coordination-infrastructure",
+        agents: false,
+      },
+      communication: {
+        transport: merchantReady
+          ? "authenticated-https"
+          : liveMerchantApi
+            ? "external-https-untrusted"
+            : "in-process-method-calls",
+        structuredMessages: true,
+        externalAgentConversation: merchantReady,
+        freeFormChat: false,
+      },
     },
     deployment: {
       runtime,
@@ -238,6 +401,16 @@ function createApplication({
     },
     missionCreation: {
       ...MISSION_CREATION_POLICY,
+      currencyRateSet: RATE_SET_ID,
+      supportedCurrencies: MISSION_CREATION_POLICY.currencyConfig.supported.map((item) => item.code),
+      currencyLimits: Object.fromEntries(
+        MISSION_CREATION_POLICY.currencyConfig.supported.map((item) => [item.code, missionCurrencyLimits(item.code)]),
+      ),
+      adapterCurrencies: {
+        local: MISSION_CREATION_POLICY.currencyConfig.supported.map((item) => item.code),
+        rainSandbox: ["USD"],
+        monadX402Settlement: ["USDC"],
+      },
       manifestName: creationManifest.name,
       contentRoot: creationManifest.contentRoot,
       pieceCount: creationManifest.totalPieces,
@@ -248,41 +421,60 @@ function createApplication({
       ...(!readiness.signerConfigured ? ["monad_signer"] : []),
       ...(!readiness.contractConfigured ? ["monad_bounty_contract"] : []),
       ...(!readiness.payToConfigured ? ["x402_pay_to_address"] : []),
-      "live_merchant_negotiation",
-      "network_recovery_provider",
+      ...(!readiness.resourceConfigured ? ["x402_resource_url"] : []),
+      ...(!merchantReady ? ["live_merchant_negotiation"] : []),
+      ...(!networkedProviders ? ["network_recovery_provider"] : []),
       "persistent_reseeding",
     ],
     orchestrator: { status: "ready" },
     paymentRails: {
-      online: adapterMode === "rain-sandbox" ? 1 : 0,
+      online: (adapterMode === "rain-sandbox" ? 1 : 0) + (x402Live ? 1 : 0),
       total: 3,
     },
     financialExecution: {
-      mode: adapterMode === "rain-sandbox" ? "rain-external-sandbox-simulation" : "local-simulation",
+      mode: x402Live
+        ? "monad-testnet-x402-plus-local-simulation"
+        : adapterMode === "rain-sandbox"
+          ? "rain-external-sandbox-simulation"
+          : "local-simulation",
       realFunds: false,
-      livePaymentsEnabled: false,
-      externalPaymentRequests: adapterMode === "rain-sandbox",
+      testnetTokensCanMove: x402Live,
+      chainWrites: x402Live,
+      livePaymentsEnabled: x402Live,
+      externalPaymentRequests: adapterMode === "rain-sandbox" || x402Live,
     },
     verifiers: { status: "local quorum" },
-    networkAccess: adapterMode === "rain-sandbox" || (
+    networkAccess: adapterMode === "rain-sandbox" || x402Live || liveMerchantApi || networkedProviders || (
       readiness.rpcConfigured && readiness.facilitatorConfigured
     ),
   };
 
   const stateFactory = () => createDefaultState(recovery, { system });
-  const store = providedStore || new JsonStore(dataFile, stateFactory);
+  store = providedStore || new JsonStore(dataFile, stateFactory);
   const previousState = store.get();
-  if (adapterMode === "rain-sandbox") {
-    const unresolvedAuthority = previousState.missions?.find((mission) => (
-      mission.rainCard?.mode === "rain-sandbox" &&
-      ["active", "expiry_scheduled"].includes(mission.rainCard.state) &&
-      new Date(mission.rainCard.expiresAt).getTime() > Date.now()
-    ));
-    if (unresolvedAuthority) {
-      const error = new Error("Startup blocked: the prior audit snapshot contains an unexpired Rain sandbox card. Reconcile it or wait for its recorded expiry before starting a fresh session.");
-      error.code = "RAIN_SANDBOX_AUTHORITY_UNRESOLVED";
+  const unresolvedAuthority = previousState.missions?.find((mission) => (
+    potentiallyLiveRainSandboxCard(mission.rainCard)
+  ));
+  if (unresolvedAuthority) {
+    const error = new Error("Startup blocked: the prior audit snapshot contains Rain sandbox authority that is unexpired or has an unknown expiry. Reconcile it or wait for its recorded expiry before starting a fresh session.");
+    error.code = "RAIN_SANDBOX_AUTHORITY_UNRESOLVED";
+    throw error;
+  }
+  const unresolvedMonadPayment = previousState.missions?.find((mission) => (
+    mission.externalOperations?.x402Pending
+  ));
+  if (unresolvedMonadPayment) {
+    if (resetStateOnStart) {
+      const error = new Error("Startup blocked: the prior audit snapshot contains an unresolved Monad x402 payment. Reconcile its payment identifier before starting a fresh session.");
+      error.code = "X402_RECONCILIATION_REQUIRED";
       throw error;
     }
+    if (x402.mode !== "monad-testnet" || typeof x402.restorePendingPayment !== "function") {
+      const error = new Error("Startup blocked: stored Monad x402 reconciliation state belongs to another adapter mode.");
+      error.code = "PERSISTED_STATE_X402_MODE_MISMATCH";
+      throw error;
+    }
+    x402.restorePendingPayment(unresolvedMonadPayment.externalOperations.x402Pending);
   }
   // Local CLI sessions intentionally start fresh because their demo adapter
   // ledgers are ephemeral. Serverless calls set this false and rehydrate those
@@ -294,7 +486,16 @@ function createApplication({
     for (const client of clients) client.write(payload);
   }
 
-  const orchestrator = new LazarusOrchestrator({ store, rain, monad, x402, negotiation, recovery, broadcast });
+  const orchestrator = new LazarusOrchestrator({
+    store,
+    rain,
+    monad,
+    x402,
+    negotiation,
+    recovery,
+    broadcast,
+    persistState,
+  });
 
   async function routeApi(request, response, url) {
     if (request.method === "POST") assertSameOriginMutation(request, { requireOrigin: allowRemoteHost });
@@ -324,20 +525,23 @@ function createApplication({
         adapters: {
           rain: rainHealth,
           monad: {
-            execution: "local-ledger",
-            writesEnabled: false,
+            execution: system.monad.mode,
+            writesEnabled: x402Live,
+            bountyWritesEnabled: false,
+            x402PaymentWritesEnabled: x402Live,
             network: monadNetwork,
             signerConfigured: readiness.signerConfigured,
             contractConfigured: readiness.contractConfigured,
             payToConfigured: readiness.payToConfigured,
           },
           x402: {
-            execution: "local-handshake",
-            liveSettlementEnabled: false,
+            execution: system.x402.mode,
+            liveSettlementEnabled: x402Live,
+            resourceConfigured: readiness.resourceConfigured,
             facilitatorConfigured: readiness.facilitatorConfigured,
           },
-          negotiation: { mode: negotiation.mode || "local-negotiation" },
-          recovery: { mode: "real-bytes-local" },
+          negotiation: { ...system.negotiation },
+          recovery: { ...system.recovery },
         },
       });
     }
@@ -386,25 +590,44 @@ function createApplication({
         });
       }
       const title = typeof body.title === "string" ? body.title.trim().slice(0, 100) : "Restore authorized dataset";
+      const currency = normalizeCurrency(body.currency);
+      if (!currency) {
+        return sendApiProblem(response, 422, {
+          code: "CURRENCY_NOT_SUPPORTED",
+          message: "Choose one supported mission currency: USD, EUR, GBP, CAD, or AUD.",
+          field: "currency",
+          details: { supportedCurrencies: system.missionCreation.supportedCurrencies },
+        });
+      }
+      if (adapterMode === "rain-sandbox" && currency !== "USD") {
+        return sendApiProblem(response, 422, {
+          code: "RAIL_CURRENCY_UNSUPPORTED",
+          message: "Rain's hackathon card sandbox authorizes USD only. Use USD for Rain sandbox execution or switch to the local multi-currency demo.",
+          field: "currency",
+          details: { rail: "rain-sandbox", supportedCurrencies: ["USD"] },
+        });
+      }
+      const currencyLimits = missionCurrencyLimits(currency);
       const rewardMinor = body.rewardMinor === undefined
-        ? MISSION_CREATION_POLICY.defaultRewardMinor
+        ? currencyLimits.defaultRewardMinor
         : body.rewardMinor;
       const totalBudgetMinor = body.totalBudgetMinor === undefined
-        ? MISSION_CREATION_POLICY.defaultBudgetMinor
+        ? currencyLimits.defaultBudgetMinor
         : body.totalBudgetMinor;
 
       if (
         !Number.isSafeInteger(rewardMinor) ||
-        rewardMinor < MISSION_CREATION_POLICY.minimumRewardMinor ||
-        rewardMinor > MISSION_CREATION_POLICY.maximumRewardMinor
+        rewardMinor < currencyLimits.minimumRewardMinor ||
+        rewardMinor > currencyLimits.maximumRewardMinor
       ) {
         return sendApiProblem(response, 422, {
           code: "REWARD_OUT_OF_RANGE",
-          message: "Provider reward must be between $1.00 and $1,000.00.",
+          message: `Provider reward must be between ${formatMinor(currencyLimits.minimumRewardMinor, currency)} and ${formatMinor(currencyLimits.maximumRewardMinor, currency)}.`,
           field: "rewardMinor",
           details: {
-            minimumRewardMinor: MISSION_CREATION_POLICY.minimumRewardMinor,
-            maximumRewardMinor: MISSION_CREATION_POLICY.maximumRewardMinor,
+            currency,
+            minimumRewardMinor: currencyLimits.minimumRewardMinor,
+            maximumRewardMinor: currencyLimits.maximumRewardMinor,
           },
         });
       }
@@ -412,30 +635,31 @@ function createApplication({
       if (!Number.isSafeInteger(totalBudgetMinor)) {
         return sendApiProblem(response, 422, {
           code: "INVALID_BUDGET_AMOUNT",
-          message: "Recovery spend cap must be a valid amount in whole cents.",
+          message: `Recovery spend cap must be a valid amount in whole ${currency} minor units.`,
           field: "totalBudgetMinor",
         });
       }
 
-      if (totalBudgetMinor < MISSION_CREATION_POLICY.minimumBudgetMinor) {
+      if (totalBudgetMinor < currencyLimits.minimumBudgetMinor) {
         return sendApiProblem(response, 422, {
           code: "BUDGET_BELOW_REQUIRED_RESERVE",
-          message: "Recovery spend cap must be at least $12.01: up to $12.00 for the archive quote plus $0.01 for discovery.",
+          message: `Recovery spend cap must be at least ${formatMinor(currencyLimits.minimumBudgetMinor, currency)}: up to ${formatMinor(currencyLimits.archiveReserveMinor, currency)} for the archive quote plus ${formatMinor(currencyLimits.discoveryReserveMinor, currency)} for discovery.`,
           field: "totalBudgetMinor",
           details: {
-            minimumBudgetMinor: MISSION_CREATION_POLICY.minimumBudgetMinor,
-            archiveReserveMinor: MISSION_CREATION_POLICY.archiveReserveMinor,
-            discoveryReserveMinor: MISSION_CREATION_POLICY.discoveryReserveMinor,
+            currency,
+            minimumBudgetMinor: currencyLimits.minimumBudgetMinor,
+            archiveReserveMinor: currencyLimits.archiveReserveMinor,
+            discoveryReserveMinor: currencyLimits.discoveryReserveMinor,
           },
         });
       }
 
-      if (totalBudgetMinor > MISSION_CREATION_POLICY.maximumBudgetMinor) {
+      if (totalBudgetMinor > currencyLimits.maximumBudgetMinor) {
         return sendApiProblem(response, 422, {
           code: "BUDGET_ABOVE_MAXIMUM",
-          message: "Recovery spend cap cannot exceed $5,000.00.",
+          message: `Recovery spend cap cannot exceed ${formatMinor(currencyLimits.maximumBudgetMinor, currency)}.`,
           field: "totalBudgetMinor",
-          details: { maximumBudgetMinor: MISSION_CREATION_POLICY.maximumBudgetMinor },
+          details: { currency, maximumBudgetMinor: currencyLimits.maximumBudgetMinor },
         });
       }
 
@@ -474,6 +698,8 @@ function createApplication({
         title: title || "Restore authorized dataset",
         rewardMinor,
         totalBudgetMinor,
+        currency,
+        currencyRateSet: RATE_SET_ID,
       });
       orchestrator.addMission(mission);
       return sendJson(response, 201, mission);
@@ -585,18 +811,23 @@ function createApplication({
     orchestrator,
     store,
     stateFactory,
+    system,
     adapters: { rain, monad, x402, negotiation, recovery },
   };
 }
 
 if (require.main === module) {
   const adapterMode = process.env.ADAPTER_MODE || "local";
-  const { server } = createApplication({ adapterMode, env: process.env });
+  const { server, system } = createApplication({ adapterMode, env: process.env });
   server.listen(PORT, HOST, () => {
     process.stdout.write(`Lazarus Mesh (${adapterMode}): http://${HOST}:${PORT}\n`);
-    process.stdout.write(adapterMode === "rain-sandbox"
-      ? "Rain sandbox is live; Monad/x402 execution remains local with read-only testnet readiness checks.\n"
-      : "All payment and chain execution is local.\n");
+    if (system.x402.liveSettlementEnabled) {
+      process.stdout.write("Monad x402 testnet payments are enabled with a strict USDC cap; bounty execution remains local.\n");
+    } else {
+      process.stdout.write(adapterMode === "rain-sandbox"
+        ? "Rain sandbox is live; Monad/x402 execution remains local with read-only testnet readiness checks.\n"
+        : "All payment and chain execution is local.\n");
+    }
   });
 }
 
