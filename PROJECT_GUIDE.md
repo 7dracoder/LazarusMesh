@@ -1,6 +1,10 @@
 # Lazarus Mesh — Complete Project Guide
 
+<<<<<<< Updated upstream
 This document describes the code currently in the repository. It distinguishes mission accounting, the authenticated remote merchant/provider, local simulation, real cryptographic work, the currently unarmed Rain sandbox adapter, financially local Production, and the Privy-backed one-shot Monad testnet Preview so demo claims remain accurate.
+=======
+This document describes the code currently in the repository. It distinguishes mission accounting, the authenticated remote merchant/provider, local simulation, real cryptographic work, the armed Rain sandbox hybrid, and the exactly-one-signer one-shot Monad testnet Preview so demo claims remain accurate.
+>>>>>>> Stashed changes
 
 No secret, API-key, private-key, user-ID, team-ID, contract-ID, or card-data value belongs in this guide. Configuration is documented by environment-variable name only.
 
@@ -34,26 +38,39 @@ The implementation has three independent selectors. `ADAPTER_MODE` chooses local
 | Merchant bargaining | Deterministic local Atlas merchant | Authenticated HTTPS merchant API | Remote binding quotes are Ed25519-signed and verified against a sponsor-pinned key |
 | x402 discovery payment | `MONAD_EXECUTION_MODE=local` is x402-shaped simulation | `MONAD_EXECUTION_MODE=x402-testnet` signs and verifies a capped official test-USDC transfer | Public Production is local; testnet is restricted to a protected one-shot Preview or access-controlled local run |
 | x402 availability seller | Disabled | Protected seller with facilitator settlement and Neon replay state | Co-located with the live Preview; disabled in public Production |
-| Payer/payee wallets | None | Privy server-wallet payer plus distinct receive-only payee | Vercel stores no raw payer key and needs no payee secret |
+| Payer/payee wallets | None | Complete Privy server-wallet payer (preferred) or one dedicated low-value 32-byte raw key, plus a distinct receive-only payee | Protected Preview requires exactly one signer and needs no payee secret |
 | Monad bounty lifecycle | In-memory local bounty ledger | No external implementation | Bounty receipt hashes are synthetic in every mode; the registry is not deployed/called |
 | Monad/x402 network readiness | Optional read-only health probe | Same probe | Real reads when both origins are configured; probe success does not authorize payment |
 | Artifact recovery | Reads and verifies a bundled 24-piece fixture | Authenticated eight-piece provider with sponsor-pinned manifest | Remote transfer and SHA-256/Merkle verification are real; persistent storage/reseeding are not |
 | Verifier quorum | Scripted local identities | No external implementation | Simulated verifier independence |
 | Reseeding | Mission state changes to two seeders | No external implementation | Simulated availability; no BitTorrent/IPFS seeding process starts |
 | Local persistence | JSON audit snapshot plus in-memory adapter ledgers | Same | Local CLI persistence is not a durable external-operation journal |
+<<<<<<< Updated upstream
 | Vercel persistence | Free Neon Postgres JSONB snapshot | Preview also stores x402 settlement/replay records | Production may call the remote merchant while keeping financial state local; Preview uses isolated state and durable payment IDs |
+=======
+| Vercel persistence | Free Neon Postgres JSONB snapshot | Preview also stores x402 settlement/replay records | Hybrid Production may call the remote merchant and Rain sandbox with isolated state; Preview uses isolated state and durable payment IDs |
+>>>>>>> Stashed changes
 | Solidity contract | Reference source only | No writer adapter | Not compiled, deployed, called, or audited by this application |
 
 The most important runtime boundary is:
 
 ```text
 Rain sandbox code can make authenticated sandbox calls and accepts USD missions only,
+<<<<<<< Updated upstream
 but the current values are blocked pending a rotated key and valid provider-issued UUID.
 The protected Monad x402 Preview can move capped official test USDC. Its Privy-backed
 buyer authorization is gasless; the submitting seller/facilitator uses MON for gas.
 The remote profile makes bargaining and provider retrieval real HTTPS operations.
 The full Monad bounty, archive spend, verifier logic, and reseeding remain local.
 Public Vercel Production performs no live payment or chain write.
+=======
+and the verified hybrid Production profile has exercised those calls with isolated state.
+The protected Monad x402 Preview can move capped official test USDC using exactly one
+complete signer. Buyer authorization is gasless; the submitting seller/facilitator uses MON.
+The hybrid profile makes bargaining, provider retrieval, and Rain sandbox operations external.
+The full Monad bounty, verifier logic, and reseeding remain local in every profile.
+Public Vercel Production rejects live x402 and performs no chain write.
+>>>>>>> Stashed changes
 ```
 
 ## 3. Architecture and trust boundaries
@@ -68,7 +85,7 @@ flowchart TD
     NEG --> REMOTE["Ed25519-signed quote API"]
     ORCH --> X402["x402-shaped local simulation"]
     ORCH --> X402LIVE["Optional Monad testnet x402 buyer"]
-    X402LIVE --> PRIVY["Restricted Privy payer server wallet"]
+    X402LIVE --> SIGNER["Exactly one restricted payer signer"]
     X402LIVE --> X402SELLER["Protected co-located x402 seller"]
     X402SELLER --> PAYEE["Distinct receive-only payee"]
     X402SELLER --> SETTLESTORE["Neon payment-ID settlement store"]
@@ -90,9 +107,13 @@ flowchart TD
 | Payment policy | Revalidates the exact spend against rights, rail, merchant, MCC, purpose, count, amount, budget, expiry, approval, duplicate, and kill-switch rules. |
 | Rain adapter | Creates and exercises narrow card-like authority. In hybrid mode, some controls are remote sandbox controls and others remain application controls. |
 | Monad adapters | `LocalMonadAdapter` always models the bounty. `MonadX402Adapter` can independently pay only for discovery on testnet. |
-| Privy signer | Accepts only the pinned EIP-3009 typed-data envelope and verifies the returned signature. Privy policy is an additional custody control. |
+| Payer signer | Complete Privy (preferred) or one dedicated 32-byte raw key; accepts only the pinned EIP-3009 typed-data envelope and verifies the returned signature. |
 | x402 seller | Requires payment IDs, durably binds them to payment/resource fingerprints, settles through the facilitator, and replays exact successes without charging twice. |
+<<<<<<< Updated upstream
 | Vercel policy | Keeps Production financially local and allows live buyer/seller only on the protected branch Preview with one fixed local-fixture mission. |
+=======
+| Vercel policy | Allows Rain sandbox in Production only with isolated state; rejects Production x402; allows live buyer/seller only on the protected branch Preview with one fixed local-fixture mission. |
+>>>>>>> Stashed changes
 | Currency policy | Keeps selected mission accounting separate from Rain USD/rUSD, x402 test USDC, and MON gas. |
 | Recovery hashes | Verify local or remote bytes against piece hashes, a sponsor-pinned Merkle root, and a full-artifact SHA-256. |
 | Verifiers | Supply the two passing attestations required by the local Monad adapter. Their independence is scripted, not decentralized. |
@@ -125,7 +146,11 @@ Local mode needs no secrets. By default it makes no payment or chain network cal
 
 `MERCHANT_MODE=remote` connects both bargaining and artifact delivery to [https://lazarus-merchant.vercel.app](https://lazarus-merchant.vercel.app). Requests use a server-side bearer token over HTTPS. Lazarus separately pins the merchant's Ed25519 fingerprint and a complete trusted artifact manifest; neither trust root is learned implicitly from the remote service.
 
+<<<<<<< Updated upstream
 The verified acceptance run used USD, completed two bargaining rounds, verified the signed `$9.75` quote, downloaded `8/8` pieces, and matched both the artifact hash and root. The bounty, Rain card allocation, verifier quorum, and reseeding remained local demo state. The run charged `$0.00` and made no chain write.
+=======
+The verified hybrid acceptance run used USD, completed two bargaining rounds, verified the signed `$9.75` quote, downloaded `8/8` pieces, and matched both the artifact hash and root. Rain's own ledger confirmed `$9.75` completed at MCC `5734` and the deliberate `$9.00` MCC `5944` challenge declined. Those are sandbox operations, so `$0.00` real money moved and there was no chain write. The bounty, verifier quorum, and reseeding remained local demo state.
+>>>>>>> Stashed changes
 
 The merchant console displays settings, negotiation sessions, counters, signed deals, and audit events. Lazarus includes proposed bounty metadata in the offer request, but the merchant currently does not persist it; the console has no financial bounty field, wallet, provider-claim control, or release history.
 
@@ -161,7 +186,7 @@ Only `local` and `rain-sandbox` are accepted. An unsupported `ADAPTER_MODE` fail
 
 Rain sandbox accepts USD mission accounting only. Use the local Rain adapter for EUR, GBP, CAD, or AUD demo accounting.
 
-The adapter is implemented, but the current sandbox values must not be used: the previously disclosed key needs rotation, and the supplied collateral/contract value is not a valid UUID. Keep `ADAPTER_MODE=local` until Rain provides both replacements. Never guess or edit a provider identifier into a plausible UUID.
+Rain sandbox is armed and verified. Authenticated health succeeds; the collateral/contract UUID was confirmed against the provider by control rather than guessed; and a full hybrid mission produced the completed and declined ledger entries described above. On Vercel, `ADAPTER_MODE=rain-sandbox` is allowed only with an explicit isolated `LAZARUS_STATE_KEY`. Keep the credential encrypted and server-side, rotate any disclosed value, and never guess or edit a provider identifier into a plausible UUID.
 
 ### Monad x402 testnet mode
 
@@ -173,7 +198,7 @@ MONAD_EXECUTION_MODE=x402-testnet node server.js
 
 This can move official Monad test USDC. The EIP-3009 buyer authorization is gasless; the submitting seller/facilitator needs testnet MON for gas. It replaces only the availability-discovery adapter; the complete bounty registry remains local. An unsupported `MONAD_EXECUTION_MODE` fails startup.
 
-Public Vercel Production rejects this mode and disables the seller. The protected branch Preview requires a Privy payer, durable co-located seller, Vercel Deployment Protection, isolated `preview-*` state, exact one-cent price/cap, six confirmations, and the single bundled mission. Reset and arbitrary mission creation are disabled.
+Public Vercel Production rejects this mode and disables the seller. The protected branch Preview requires exactly one payer signer (complete Privy preferred or one dedicated low-value 32-byte raw key), a durable co-located seller, Vercel Deployment Protection, isolated `preview-*` state, exact one-cent price/cap, six confirmations, and the single bundled mission. Reset and arbitrary mission creation are disabled.
 
 ### Development and test commands
 
@@ -201,7 +226,7 @@ npm run check
 
 The adapter validates the base URL as HTTPS, validates UUID-shaped identifiers, and rejects missing/too-short API credentials before it can run.
 
-Current blocker: the disclosed sandbox key must be rotated and the collateral/contract value must be replaced by a valid provider-issued UUID before authenticated health or any sandbox mutation is attempted.
+The verified deployment uses a provider-confirmed collateral UUID and has completed authenticated sandbox mutations. Rotate any credential disclosed in chat before continued use; do not replace the confirmed provider identifier with a guessed value.
 
 ### Monad and x402 configuration
 
@@ -218,7 +243,7 @@ Current blocker: the disclosed sandbox key must be rotated and the collateral/co
 | `PRIVY_APP_SECRET` | Encrypted server-side Privy secret; Preview/branch scope only. |
 | `PRIVY_PAYER_WALLET_ID` | Dedicated low-value payer server-wallet ID; never returned to the browser. |
 | `PRIVY_PAYER_ADDRESS` | Public payer address used to verify returned signatures. |
-| `MONAD_PRIVATE_KEY` | Local-only signer fallback. Configure either it or Privy, never both; Vercel live mode forbids it. |
+| `MONAD_PRIVATE_KEY` | Dedicated low-value 32-byte fallback. Configure either it or complete Privy, never both; protected Vercel Preview accepts either choice. |
 | `MONAD_PAY_TO_ADDRESS` | Required distinct seller recipient in `x402-testnet`. |
 | `X402_EXPECTED_AMOUNT_ATOMIC` | Exact test-USDC price; default `10000` atomic units, or test USDC 0.01. |
 | `X402_MAX_PAYMENT_ATOMIC` | Payment cap; defaults to the expected amount and can never exceed 1 test USDC. |
@@ -317,7 +342,11 @@ No onchain bounty escrow is funded in any current mode. A testnet x402 payment i
 - The local Monad adapter records the configured provider claiming the demo bounty and the selected-currency stake requirement. Only the initial non-settling bounty proposal is included in merchant offer context; claim and release records are not sent to the merchant console.
 - Rain creates a scoped card tied to the mission and quote. It stores safe metadata only.
 - The built-in challenge proposes an unrelated luxury purchase using the selected-currency equivalent of USD 9.00, merchant `merchant_luxury_market`, MCC `5944`, and purpose `unrelated_purchase`. It is deliberately within the amount ceiling so merchant/MCC/purpose scoping—not merely amount—blocks it.
+<<<<<<< Updated upstream
 - The exact quoted archival-egress purchase is authorized and settled locally. Rain sandbox can execute this step only for a USD mission.
+=======
+- The exact quoted archival-egress purchase is authorized and settled locally by default or through Rain's sandbox for a USD hybrid mission.
+>>>>>>> Stashed changes
 - For the USD reference run, mission spend becomes `976` cents: USD 0.01 plus USD 9.75. Other currencies retain their own integer minor-unit totals.
 - The negotiation state becomes `consumed`, preventing the quote from being treated as unused authority.
 - State becomes `RECOVERING` and availability becomes `16`.
@@ -579,6 +608,8 @@ POST /simulate/transactions/{transactionId}/reverse
 GET  /issuing/cards/{cardId}
 ```
 
+The sponsor starter also lists Rain `/payment-routes` and `/simulate/payment-routes`. Lazarus does not implement or claim that separate cross-rail flow; the mission uses the scoped-card path above.
+
 - The transactions query is the authenticated health check.
 - Collateral funding simulates rUSD setup once before first card creation when auto-funding is nonzero.
 - Scoped-card creation requests the exact accepted USD amount, quote expiry, and allowed MCCs. Rain may apply its sandbox authorization buffer to the remote ceiling; Lazarus application policy still permits only the exact accepted amount.
@@ -651,13 +682,15 @@ Before signing, it requires a fresh valid x402 v2 exact 402 response, verifies c
 
 The x402 seller is responsible for facilitator verify/settle calls, uses a settlement submitter that pays Monad gas, and enforces durable global uniqueness for the namespaced payment ID. The buyer may create an unused signature, but it persists the global pending-payment gate immediately before sending anything to the seller; only the successful durable state-write/CAS winner can transmit. An ambiguous paid-request outcome keeps that gate blocked until reconciliation. This mode can move test USDC, but the EIP-3009 authorization is gasless for the buyer. It is not mainnet or real-money production settlement.
 
-### Privy payer and receive-only payee
+The protected Preview completed transaction [`0x204f66f2cc3180e619babc9c341ddc71805ca8240a556d4665cf449bfb15300d`](https://testnet.monadscan.com/tx/0x204f66f2cc3180e619babc9c341ddc71805ca8240a556d4665cf449bfb15300d). Independent RPC checks confirmed chain `10143`, receipt success, and the exact 10,000-atomic (test USDC `0.01`) Transfer of the official Monad test-USDC token from the dedicated payer to the distinct payee. That run used the raw-key fallback and separately recorded the `$9.75` archive allocation in Rain's sandbox. The transaction proves paid discovery only; bounty, verifiers, and reseeding remained local.
 
-The protected Preview uses `PrivyServerWalletSigner` instead of a raw key. The payer is a dedicated low-value server wallet funded only with the required test USDC. The payee is a different receive-only wallet; the application needs only its public address and never needs its private key or seed phrase.
+### Exactly-one-signer payer and receive-only payee
 
-A restrictive Privy wallet policy is the custody-side control. Before Privy is called, Lazarus independently permits only the exact `TransferWithAuthorization` schema, USDC name/version, Monad testnet, pinned token contract, configured payer/payee, capped positive amount, zero `validAfter`, short `validBefore`, and 32-byte nonce. The signing response is bounded and sanitized, and the returned signature must verify against the payer address.
+The protected Preview accepts either `PrivyServerWalletSigner` (preferred) or one dedicated low-value 32-byte raw key. Exactly one signer type must be complete. The payer is funded only with the required test USDC. The payee is a different receive-only wallet; the application needs only its public address and never needs its private key or seed phrase.
 
-Privy configuration is all-or-nothing. The four payer variables must be present together. `MonadX402Adapter` accepts either a signer object or a raw private key; it rejects both together. Vercel live policy requires Privy and forbids the raw-key path.
+When Privy is selected, a restrictive wallet policy is the custody-side control. Regardless of signer type, Lazarus independently permits only the exact `TransferWithAuthorization` schema, USDC name/version, Monad testnet, pinned token contract, configured payer/payee, capped positive amount, zero `validAfter`, short `validBefore`, and 32-byte nonce. Managed signing responses are bounded and sanitized, and every returned signature must verify against the payer address.
+
+Privy configuration is all-or-nothing: its four payer variables must be present together. `MonadX402Adapter` and Vercel live policy accept either that complete signer object or one valid 32-byte raw key and reject both together.
 
 ### Protected durable seller
 
@@ -669,7 +702,7 @@ In the protected Vercel Preview, buyer and seller are co-located. The buyer uses
 
 ### Vercel one-shot policy
 
-The live Preview starts only when Vercel environment/target are Preview, the branch matches the explicit allowlist, external writes are armed, state uses a unique `preview-*` key, amount and cap are exactly 10,000 atomic test-USDC units, authorization is at most 300 seconds, confirmations are at least six, all Privy values exist, and no raw private key exists.
+The live Preview starts only when Vercel environment/target are Preview, the branch matches the explicit allowlist, external writes are armed, state uses a unique `preview-*` key, amount and cap are exactly 10,000 atomic test-USDC units, authorization is at most 300 seconds, confirmations are at least six, and exactly one payer signer is valid (complete Privy preferred or one dedicated low-value 32-byte raw key).
 
 Request hosts must match Vercel's deployment/branch hosts, and persisted state must contain only the bundled demo mission. The immutable mission uses a 30-day preview lifetime instead of the normal one-hour local session. Reset and mission creation return `LIVE_PREVIEW_ONE_SHOT`. Only one unresolved buyer payment is allowed across the state.
 
@@ -870,7 +903,7 @@ The mission form displays the server-published content root, license, and piece 
 
 This is defense in depth for a loopback demo, not user authentication. The app has no accounts, sessions, CSRF token, authorization roles, TLS termination, rate limiting, durable audit signing, or multi-tenant isolation and must not be exposed as a production service.
 
-The Vercel Preview instead relies on Vercel Deployment Protection for access control, plus exact branch/host/environment checks and the one-shot state gate. Host checks are not authentication. Public Production stays local-only and contains no payer or Rain secret.
+The Vercel Preview instead relies on Vercel Deployment Protection for access control, plus exact branch/host/environment checks and the one-shot state gate. Host checks are not authentication. Public Production contains no payer signer. Rain secrets are allowed only for the isolated-state sandbox hybrid.
 
 ### Secrets and payment data
 
@@ -880,9 +913,9 @@ The Vercel Preview instead relies on Vercel Deployment Protection for access con
 - Provider response bodies and configured origins are not exposed as credential-bearing errors.
 - Private keys, API keys, card material, and raw recovery bytes must never be added to browser JavaScript, SSE, audit JSON, logs, model prompts, or blockchain calldata.
 - `.env` must remain ignored and uncommitted; use `.env.example` only for variable names/placeholders.
-- Privy app secret and payer wallet ID are branch-scoped server values. They never enter state or browser code.
+- Every payer signer secret is a branch-scoped server value. Privy app secrets/wallet IDs and raw payer keys never enter state or browser code.
 - The payee is receive-only and needs no stored private key.
-- Vercel live mode refuses `MONAD_PRIVATE_KEY`; a raw key is a local-only fallback.
+- Vercel live Preview accepts exactly one signer: complete Privy (preferred) or a dedicated 32-byte `MONAD_PRIVATE_KEY`; both together fail closed.
 
 Credentials accidentally disclosed outside the repository should be rotated at their provider. Merely omitting them from documentation does not revoke them.
 
@@ -892,7 +925,7 @@ Credentials accidentally disclosed outside the repository should be rotated at t
 | --- | --- |
 | Unsupported adapter mode | Startup throws; no fallback. |
 | Invalid/missing Rain sandbox configuration | Hybrid startup throws `RAIN_INVALID_CONFIGURATION`. |
-| Current Rain credential set | Keep Rain disabled: rotate the exposed key and obtain a valid provider-issued collateral/contract UUID. |
+| Rotated/invalid Rain configuration | Startup or authenticated health fails closed; never guess or transform a provider-issued identifier. |
 | Rain authentication/provider/network failure | Health returns 503 or the mission action fails with a sanitized Rain error; limited retries apply only to retryable failures. |
 | Configured Monad RPC/facilitator readiness mismatch | Health returns 503 when the paired readiness probe is configured; bounty execution remains local. |
 | Invalid/missing live x402 configuration | `x402-testnet` startup fails closed; no local fallback. |
@@ -931,14 +964,17 @@ The Node suite covers local behavior and uses injected/fake network clients for 
 | `tests/domain.test.js` | General policy boundaries/codes, transitions, canonical hashes, manifests, corruption, simulation, and rail selection. |
 | `tests/currency.test.js` | Explicit currency catalog, conservative conversion/rounding, and rejection of settlement assets as mission currencies. |
 | `tests/integration.test.js` | Full nine-step HTTP run, negotiation routes, exact economics, audit export, validation, reset/run safety, origin/Host/body protections, and state truth. |
+| `tests/handler.test.js` | Serverless preflight guards, one-shot capabilities, x402 pending-state safety, and separate x402-vs-bounty write metadata. |
+| `tests/merchant-remote.test.js` | Signed remote bargaining, pinned eight-piece recovery, and the combined remote-merchant/provider plus Rain sandbox workflow across request-local rehydration. |
 | `tests/negotiation.test.js` | Two-round transcript, binding quote/digest, idempotency, cloning, failure cases, and quote-policy denial matrix. |
 | `tests/rain-sandbox.test.js` | Rain endpoint/header/body mapping, idempotency, encrypted-session use, PAN/CVC redaction, authorization plus explicit-amount settlement, local merchant denial, remote MCC decline, expiry-scheduled retirement, and malformed-UUID rejection. |
 | `tests/monad-network.test.js` | Chain/facilitator readiness, strict origins, redirect safety, response limits, timeouts, and sanitized failures. |
 | `tests/services.test.js` | Local Rain scope, local Monad quorum/tranches, local x402 idempotency, and exact fixture reconstruction. |
 | `tests/x402-monad.test.js` | x402 v2 requirement validation, bounded signing, payment identifiers, receipt/transfer verification, wrong-policy cases, balance checks, and unknown outcomes using fakes. |
+| `tests/x402-internal-fetch.test.js` | Same-origin seller routing, abort/timeout behavior, listener cleanup, and safe handling of late seller outcomes. |
 | `tests/privy-signer.test.js` | Privy typed-data allowlist, request shape, secret redaction, returned-signature verification, and all-or-nothing configuration. |
 | `tests/x402-seller.test.js` | Protected seller requirements, durable payment-ID semantics, settlement/replay/conflict/uncertain outcomes, and buyer/seller protocol compatibility. |
-| `tests/vercel-policy.test.js` | Production denial, protected Preview arming, branch/host/state controls, one-shot behavior, and raw-key refusal. |
+| `tests/vercel-policy.test.js` | Production denial, protected Preview arming, branch/host/state controls, one-shot behavior, and exactly-one-signer acceptance/rejection. |
 | `tests/state-migrations.test.js` | Runtime-state migration and preservation of external-vs-synthetic evidence. |
 
 ```sh
@@ -1095,11 +1131,11 @@ tmp/pdfs/
 
 ### Live merchant bargaining
 
-Replace `LocalNegotiationAdapter` with a merchant/marketplace quote adapter while preserving the same `getOffers`, `sendCounterOffer`, and `getBindingQuote` boundary. A live implementation also needs authenticated merchant responses, signed/verifiable quote commitments, durable idempotency, timeout/replay protection, legal term normalization, cancellation, and human escalation when terms leave the approved envelope. The LLM may draft language, but deterministic policy must remain the authority.
+The authenticated `RemoteNegotiationAdapter` and signed merchant quote flow already exist. Productionizing them still requires tenant identity, formal key rotation, durable quote/payment reconciliation, rate limits, abuse monitoring, cancellation, legal term normalization, and human escalation when terms leave the approved envelope. An LLM may draft language, but deterministic policy must remain the authority.
 
 ### Production x402 settlement
 
-The capped testnet buyer already validates version/scheme, network, official token, amount, recipient, resource, authorization window, payment identifier, seller settlement response, and exact confirmed transfer, and durably records the pending operation immediately before paid transmission. The protected seller adds durable payment-ID reservation and replay. Production still requires managed custody, a reviewed operator reconciliation/clearance workflow, horizontally safe locks, quotas, abuse controls, monitoring, incident response, and a reviewed mainnet/token/facilitator policy. Public Vercel Production remains local-only.
+The capped testnet buyer already validates version/scheme, network, official token, amount, recipient, resource, authorization window, payment identifier, seller settlement response, and exact confirmed transfer, and durably records the pending operation immediately before paid transmission. The protected seller adds durable payment-ID reservation and replay. Production still requires managed custody, a reviewed operator reconciliation/clearance workflow, horizontally safe locks, quotas, abuse controls, monitoring, incident response, and a reviewed mainnet/token/facilitator policy. Public Vercel Production remains x402-local even when the Rain sandbox hybrid is enabled.
 
 ### Live Monad bounty execution
 
@@ -1109,7 +1145,7 @@ Compile, test, audit, and deploy the contract; implement a separate writer adapt
 
 Move beyond sandbox simulation only after confirming production API contracts, issuer/compliance requirements, merchant/MCC behavior, webhooks, signed events, reversal/dispute semantics, card cancellation, quotas, and secure card-data handling. Keep application quote policy even where Rain adds more remote controls.
 
-Before even running the current sandbox path, rotate the previously disclosed credential and obtain a valid provider-issued collateral/contract UUID. Configuration validation is intentionally fail-closed.
+The sandbox path is armed and provider-verified. Keep its credential encrypted and server-side, rotate any value disclosed outside a secret manager, retain the provider-validated UUID exactly, and preserve fail-closed configuration validation.
 
 ### Production multi-currency
 
@@ -1147,6 +1183,12 @@ The safe local/public demo succeeds when all of the following are visible in sta
 - the mission reaches `COMPLETED`; and
 - the audit JSON can be exported without secret or card data.
 
+<<<<<<< Updated upstream
 The remote acceptance run additionally requires authenticated HTTPS health, a matching sponsor-pinned manifest, two successful bargaining rounds, a signed `$9.75` USD quote, `8/8` valid pieces, and a matching reconstructed hash/root. Its archive allocation, bounty, verifier roles, and reseeding remain local, with `$0.00` charged and no chain write.
 
 An additional capped Preview acceptance run succeeds only when Vercel Deployment Protection is enabled, the one-shot gates hold, the Privy policy and code-level signer allowlist are active, the protected seller durably records the payment ID, `x402-testnet` produces a real transaction hash, the expected official test-USDC `Transfer` is independently confirmed, and the payment ID/receipt/explorer evidence are retained. That testnet profile uses the pinned local fixture and cannot be combined with remote merchant mode. Its transaction proves paid discovery only; archive purchase, bounty registry, verifier network, and reseeding remain local.
+=======
+The hybrid Production acceptance run additionally requires authenticated merchant and Rain health, a matching sponsor-pinned manifest, two successful bargaining rounds, a signed `$9.75` USD quote, `8/8` valid pieces, and a matching reconstructed hash/root. Rain's ledger must show `$9.75` completed at MCC `5734` and the `$9.00` MCC `5944` negative control declined. Those are sandbox operations with `$0.00` real money and no chain write; bounty, verifier roles, and reseeding remain local.
+
+The capped Preview acceptance run succeeds only when Vercel Deployment Protection is enabled, the one-shot gates hold, exactly one signer is valid, the code-level signing allowlist is active, the protected seller durably records the payment ID, and the expected official test-USDC `Transfer` is independently confirmed. Transaction `0x204f…00d` met those conditions with the raw-key fallback; complete Privy remains the preferred managed signer. That testnet profile uses the pinned local fixture and cannot be combined with remote merchant mode. The verified run also used Rain sandbox for the archive allocation. Its transaction proves paid discovery only; the bounty registry, verifier network, and reseeding remain local.
+>>>>>>> Stashed changes

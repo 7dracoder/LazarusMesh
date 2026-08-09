@@ -142,20 +142,36 @@ function vercelRuntimePolicy(env = process.env) {
   if (positiveInteger(env, "MONAD_X402_CONFIRMATIONS", 6) < 6) {
     throw configurationError("The protected preview requires at least six Monad confirmations.");
   }
-  if (nonempty(env, "MONAD_PRIVATE_KEY")) {
-    throw configurationError("Raw private keys are forbidden on Vercel; configure the scoped Privy signer instead.");
-  }
-
+  // The protected preview requires exactly one payer signer. A managed Privy
+  // server wallet is preferred because no key material ever reaches the
+  // deployment. A dedicated low-value raw key is also accepted here, and only
+  // here: this path is preview-only, branch-pinned, deployment-protected,
+  // capped at one cent, six-confirmation, one-shot, and isolated by state key.
+  // Public production still reaches neither branch, because live execution is
+  // rejected outright above unless VERCEL_ENV and VERCEL_TARGET_ENV are both
+  // preview. Supplying both signers would leave the active one ambiguous.
   const privyNames = [
     "PRIVY_APP_ID",
     "PRIVY_APP_SECRET",
     "PRIVY_PAYER_WALLET_ID",
     "PRIVY_PAYER_ADDRESS",
   ];
-  const missingPrivy = privyNames.filter((name) => !nonempty(env, name));
-  if (missingPrivy.length) {
-    throw configurationError(`The protected preview is missing ${missingPrivy.join(", ")}.`);
+  const providedPrivy = privyNames.filter((name) => nonempty(env, name));
+  const rawPrivateKey = nonempty(env, "MONAD_PRIVATE_KEY");
+  if (rawPrivateKey && providedPrivy.length) {
+    throw configurationError("Configure either the Privy payer or MONAD_PRIVATE_KEY, never both.");
   }
+  if (rawPrivateKey) {
+    if (!/^0x[0-9a-fA-F]{64}$/.test(rawPrivateKey)) {
+      throw configurationError("MONAD_PRIVATE_KEY must be a 32-byte hexadecimal private key.");
+    }
+  } else {
+    const missingPrivy = privyNames.filter((name) => !nonempty(env, name));
+    if (missingPrivy.length) {
+      throw configurationError(`The protected preview needs one payer signer: supply MONAD_PRIVATE_KEY, or the complete Privy payer (missing ${missingPrivy.join(", ")}).`);
+    }
+  }
+  const signerKind = rawPrivateKey ? "raw-private-key" : "privy-server-wallet";
 
   const allowedHosts = [nonempty(env, "VERCEL_URL"), nonempty(env, "VERCEL_BRANCH_URL")]
     .filter(Boolean)
@@ -171,6 +187,7 @@ function vercelRuntimePolicy(env = process.env) {
     liveBuyerEnabled: true,
     livePreviewOneShot: true,
     sellerEnabled,
+    signerKind,
     stateKey: key,
     allowedHosts: Object.freeze([...new Set(allowedHosts)]),
   });

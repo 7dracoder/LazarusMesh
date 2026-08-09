@@ -33,6 +33,47 @@ function plainHeaders(input) {
   return result;
 }
 
+function abortError() {
+  return new DOMException("The operation was aborted.", "AbortError");
+}
+
+function awaitWithAbort(operation, signal) {
+  if (!signal) return Promise.resolve().then(operation);
+  if (signal.aborted) return Promise.reject(abortError());
+
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const finish = (callback, value) => {
+      if (settled) return;
+      settled = true;
+      signal.removeEventListener("abort", onAbort);
+      callback(value);
+    };
+    const onAbort = () => finish(reject, abortError());
+
+    signal.addEventListener("abort", onAbort, { once: true });
+    if (signal.aborted) {
+      onAbort();
+      return;
+    }
+
+    let pending;
+    try {
+      pending = operation();
+    } catch (error) {
+      finish(reject, error);
+      return;
+    }
+
+    // Always attach both handlers. If the caller aborts first, a later seller
+    // rejection is consumed here instead of becoming an unhandled rejection.
+    Promise.resolve(pending).then(
+      (value) => finish(resolve, value),
+      (error) => finish(reject, error),
+    );
+  });
+}
+
 class BufferedFetchResponse {
   constructor() {
     this.statusCode = 200;
@@ -82,7 +123,8 @@ function createInternalX402SellerFetch({ seller, availabilityBaseUrl } = {}) {
   const baseUrl = normalizeBaseUrl(availabilityBaseUrl);
 
   return async function internalX402SellerFetch(resource, options = {}) {
-    if (options.signal?.aborted) throw new DOMException("The operation was aborted.", "AbortError");
+    const signal = options.signal;
+    if (signal?.aborted) throw abortError();
     let url;
     try {
       url = resource instanceof URL ? new URL(resource.href) : new URL(String(resource));
@@ -100,7 +142,7 @@ function createInternalX402SellerFetch({ seller, availabilityBaseUrl } = {}) {
       headers: plainHeaders(options.headers),
     };
     const response = new BufferedFetchResponse();
-    const handled = await seller.handle(request, response, url);
+    const handled = await awaitWithAbort(() => seller.handle(request, response, url), signal);
     if (handled !== true || !response.headersSent) {
       throw new InternalX402FetchError(
         "X402_INTERNAL_FETCH_ROUTE_MISSING",

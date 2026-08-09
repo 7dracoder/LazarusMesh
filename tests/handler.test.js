@@ -201,6 +201,17 @@ test("protected live preview disables reset and arbitrary mission creation", asy
     "the immutable one-shot mission remains demoable beyond the default one-hour local session",
   );
 
+  const state = await request(app.requestHandler, {
+    method: "GET",
+    url: "/api/state",
+  });
+  assert.equal(state.statusCode, 200);
+  assert.equal(state.json().system.deployment.livePreviewOneShot, true);
+  assert.equal(state.json().system.deployment.resetEnabled, false);
+  assert.equal(state.json().system.missionCreation.available, false);
+  assert.equal(state.json().system.missionCreation.enabled, false);
+  assert.match(state.json().system.missionCreation.unavailableReason, /preloaded mission/i);
+
   const reset = await request(app.requestHandler, {
     method: "POST",
     url: "/api/demo/reset",
@@ -315,16 +326,17 @@ test("a confirmed live x402 receipt is never checkpointed before its step index"
 });
 
 test("application wiring reports opt-in Monad x402 writes without making the bounty live", () => {
+  const liveX402Env = {
+    MONAD_EXECUTION_MODE: "x402-testnet",
+    MONAD_RPC_URL: "https://testnet-rpc.monad.xyz",
+    MONAD_PRIVATE_KEY: `0x${createHash("sha256").update("lazarus-mesh-test-signer").digest("hex")}`,
+    MONAD_PAY_TO_ADDRESS: "0x2222222222222222222222222222222222222222",
+    X402_AVAILABILITY_BASE_URL: "https://seller.example/availability/",
+  };
   const store = new MemoryStore(() => ({ missions: [] }));
   const app = createApplication({
     store,
-    env: {
-      MONAD_EXECUTION_MODE: "x402-testnet",
-      MONAD_RPC_URL: "https://testnet-rpc.monad.xyz",
-      MONAD_PRIVATE_KEY: `0x${createHash("sha256").update("lazarus-mesh-test-signer").digest("hex")}`,
-      MONAD_PAY_TO_ADDRESS: "0x2222222222222222222222222222222222222222",
-      X402_AVAILABILITY_BASE_URL: "https://seller.example/availability/",
-    },
+    env: liveX402Env,
   });
 
   assert.equal(app.system.x402.liveSettlementEnabled, true);
@@ -332,4 +344,19 @@ test("application wiring reports opt-in Monad x402 writes without making the bou
   assert.equal(app.system.monad.bountyWritesEnabled, false);
   assert.equal(app.system.financialExecution.testnetTokensCanMove, true);
   assert.equal(app.system.financialExecution.realFunds, false);
+  assert.equal(app.system.financialExecution.mode, "monad-testnet-x402-plus-local-card-simulation");
+
+  const combined = createApplication({
+    adapterMode: "rain-sandbox",
+    store: new MemoryStore(() => ({ missions: [] })),
+    env: {
+      ...liveX402Env,
+      RAIN_API_BASE_URL: "https://api-dev.raincards.xyz/v1",
+      RAIN_API_KEY: "unit-test-rain-api-key",
+      RAIN_USER_ID: "11111111-1111-4111-8111-111111111111",
+      RAIN_CONTRACT_ID: "33333333-3333-4333-8333-333333333333",
+    },
+  });
+  assert.equal(combined.system.rain.external, true);
+  assert.equal(combined.system.financialExecution.mode, "rain-external-sandbox-plus-monad-testnet-x402");
 });

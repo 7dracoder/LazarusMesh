@@ -2,7 +2,11 @@
 
 Updated: 2026-08-09
 
+<<<<<<< Updated upstream
 This document describes the integration code that exists now. It separates mission accounting, authenticated remote merchant/provider traffic, deterministic demo behavior, Rain sandbox calls, the Privy payer, the protected x402 seller, and the still-local recovery bounty.
+=======
+This document describes the integration code that exists now. It separates mission accounting, authenticated remote merchant/provider traffic, deterministic demo behavior, Rain sandbox calls, the exactly-one-signer x402 payer, the protected x402 seller, and the still-local recovery bounty.
+>>>>>>> Stashed changes
 
 Never put credential values, provider identifiers, wallet IDs, wallet addresses, seed phrases, or private keys in source control, browser code, API responses, screenshots, model input, or documentation. Rotate anything previously disclosed before using it again.
 
@@ -15,7 +19,7 @@ Never put credential values, provider identifiers, wallet IDs, wallet addresses,
 | Rain | `ADAPTER_MODE=local` | `ADAPTER_MODE=rain-sandbox` (armed and verified; allowed on Vercel with an isolated state key) | The remote path calls Rain's hackathon sandbox, accepts USD mission accounting, and uses sandbox rUSD collateral. It is not a production card program. |
 | x402 buyer | `MONAD_EXECUTION_MODE=local` | `MONAD_EXECUTION_MODE=x402-testnet` | Local is x402-shaped simulation. Testnet mode can sign and settle the pinned test-USDC payment on Monad. |
 | x402 seller | Disabled by default | `X402_SELLER_ENABLED=true` | Enabled only with the protected testnet preview/local integration; it requires a durable settlement store. Public production disables it. |
-| Payer custody | None | Privy server wallet; raw private key is local-only fallback | Vercel live mode requires Privy and refuses `MONAD_PRIVATE_KEY`. |
+| Payer custody | None | Complete Privy server wallet (preferred) or one dedicated 32-byte raw key | The protected Preview requires exactly one signer type and rejects both together, incomplete Privy, or an invalid raw key. |
 | Payee custody | None | Distinct receive-only address | No payee private key or seed phrase is required or stored. |
 | Monad bounty | `LocalMonadAdapter` | No external implementation | Bounty, collateral, attestations, and releases remain local in every mode. |
 | Merchant bargaining | `LocalNegotiationAdapter` | `RemoteNegotiationAdapter` | Remote mode uses an authenticated HTTPS API, pins an Ed25519 key, and verifies signed binding quotes. |
@@ -26,8 +30,13 @@ Never put credential values, provider identifiers, wallet IDs, wallet addresses,
 
 | Profile | Buyer | Seller | Mutations |
 | --- | --- | --- | --- |
+<<<<<<< Updated upstream
 | Public Production | Local | Disabled | Local or remote merchant/provider missions; no payment or chain writes. |
 | Protected branch Preview | Privy-backed testnet buyer | Durable co-located seller | One fixed bundled mission; reset and arbitrary mission creation are disabled. |
+=======
+| Public Production | Local | Disabled | Verified hybrid may use remote merchant/provider plus Rain sandbox with isolated state; no real-money or chain writes. |
+| Protected branch Preview | Exactly-one-signer testnet buyer | Durable co-located seller | One fixed bundled local-fixture mission; the verified run also used Rain sandbox; reset and arbitrary mission creation are disabled. |
+>>>>>>> Stashed changes
 
 The preview must use Vercel Deployment Protection. Runtime host/branch checks are defense in depth, not authentication. The buyer uses an internal same-origin seller transport, so it does not bypass or depend on calling through Vercel's external protection challenge. The x402 HTTP route remains available behind the same deployment protection for protocol inspection.
 
@@ -115,7 +124,7 @@ Rain activation is complete. Authenticated health passes and the collateral/cont
 | `PRIVY_APP_SECRET` | Privy server app secret; encrypted, server-side, preview-only. |
 | `PRIVY_PAYER_WALLET_ID` | Dedicated low-value payer server-wallet ID; never expose to the browser. |
 | `PRIVY_PAYER_ADDRESS` | Public address expected to sign; must differ from payee. |
-| `MONAD_PRIVATE_KEY` | Local-only alternative to Privy. Configure one signer type, never both. Forbidden in Vercel live preview. |
+| `MONAD_PRIVATE_KEY` | Dedicated low-value 32-byte alternative to complete Privy. The protected Preview accepts it; configure exactly one signer type, never both. |
 | `X402_EXPECTED_AMOUNT_ATOMIC` | Exact price. Protected preview pins it to `10000` atomic test-USDC units. |
 | `X402_MAX_PAYMENT_ATOMIC` | Hard cap. Protected preview pins it to the same `10000` value. |
 | `X402_MAX_AUTHORIZATION_SECONDS` | Short authorization ceiling; protected preview allows at most `300`. |
@@ -125,7 +134,7 @@ Rain activation is complete. Authenticated health passes and the collateral/cont
 | `MONAD_X402_CONFIRMATIONS` | Receipt confirmations; protected preview requires at least `6`. |
 | `X402_EXPECTED_PROVIDER_ID` | Exact provider identity required in the paid response. |
 
-Privy configuration is all-or-nothing. Missing one of the four `PRIVY_*` payer values fails closed. The signer object exposes only its public address; app secret and wallet ID remain private fields.
+Privy configuration is all-or-nothing. Missing one of the four `PRIVY_*` payer values fails closed. The signer object exposes only its public address; app secret and wallet ID remain private fields. Live Preview policy accepts either that complete Privy set or one valid 32-byte raw key and rejects both together.
 
 ### x402 seller and Vercel preview gate
 
@@ -146,17 +155,17 @@ Vercel supplies deployment environment, target, branch, and host metadata. Live 
 5. price and cap are both exactly `10000` atomic test-USDC units;
 6. authorization is no longer than 300 seconds;
 7. at least six confirmations are required;
-8. all Privy payer values exist and no raw private key exists;
+8. exactly one signer is valid: all four Privy payer values (preferred) or one dedicated low-value 32-byte raw key;
 9. the request host is the deployment or branch host; and
 10. persisted state contains only the fixed bundled demo mission.
 
 The one-shot preview returns `LIVE_PREVIEW_ONE_SHOT` for reset or new-mission creation. It also allows at most one unresolved x402 payment across all missions.
 
-## Privy signer policy
+## Payer signer policy
 
-Use a dedicated payer server wallet with only the test USDC needed for the demonstration. Attach a restrictive Privy wallet policy; do not grant general transaction or arbitrary typed-data signing authority.
+Use a dedicated payer with only the test USDC needed for the demonstration. Prefer a complete Privy server wallet with a restrictive policy; the protected Preview also accepts a dedicated 32-byte raw key fallback. Configure exactly one signer and do not grant or fund general authority.
 
-Lazarus adds an independent code-level allowlist before every Privy signing request. It permits only:
+Lazarus applies the same independent code-level allowlist before either signer is used. It permits only:
 
 - `eth_signTypedData_v4` for `TransferWithAuthorization`;
 - the exact EIP-3009 field schema;
@@ -167,7 +176,7 @@ Lazarus adds an independent code-level allowlist before every Privy signing requ
 - `validAfter` equal to zero and a short `validBefore` window; and
 - a canonical 32-byte nonce.
 
-Any other chain, token, signer, recipient, amount, lifetime, method, or schema is rejected before Privy is called. Responses are size/time bounded, upstream errors are sanitized, and the returned signature is cryptographically verified against the configured payer address.
+Any other chain, token, signer, recipient, amount, lifetime, method, or schema is rejected before signing. Managed-signer responses are size/time bounded, upstream errors are sanitized, and every returned signature is cryptographically verified against the configured payer address.
 
 The payee remains receive-only. Do not create or upload payee signing credentials merely to receive test USDC.
 
@@ -206,7 +215,9 @@ Before signing, the buyer:
 
 It then obtains the EIP-3009 signature, sends `PAYMENT-SIGNATURE`, validates `PAYMENT-RESPONSE`, bounds the paid body, waits for confirmations, and independently verifies the exact test-USDC `Transfer` from payer to payee.
 
-A definitive Privy signing, payload-validation, header-encoding, or pending-state persistence failure happens before any paid seller request. An ambiguous timeout or response after the durable gate and transmission leaves the pending record in place. Reset, fresh startup, or another paid transmission is refused until an operator reconciles the stable namespaced payment ID and chain evidence.
+A definitive signing, payload-validation, header-encoding, or pending-state persistence failure happens before any paid seller request. An ambiguous timeout or response after the durable gate and transmission leaves the pending record in place. Reset, fresh startup, or another paid transmission is refused until an operator reconciles the stable namespaced payment ID and chain evidence.
+
+The protected Preview completed transaction [`0x204f66f2cc3180e619babc9c341ddc71805ca8240a556d4665cf449bfb15300d`](https://testnet.monadscan.com/tx/0x204f66f2cc3180e619babc9c341ddc71805ca8240a556d4665cf449bfb15300d) using the raw-key fallback. Independent RPC checks confirmed chain `10143`, a successful receipt, and the exact 10,000-atomic (test USDC `0.01`) Transfer of the official Monad test-USDC token from the dedicated payer to the distinct payee. The same run recorded the archive payment in Rain's sandbox. The transaction proves only paid availability discovery with the local fixture; bounty, verifiers, and reseeding remained local.
 
 ## Rain sandbox adapter
 
@@ -223,6 +234,8 @@ Implementation: `src/services/rain-sandbox.js`. Provider reference: [Rain hackat
 | Card lookup | `GET /issuing/cards/:id` | Safe status reconciliation. |
 
 Every external request uses HTTPS, same-origin redirect checks, bounded timeouts/bodies, sanitized errors, and deterministic idempotency. Encrypted PAN/CVC response fields are discarded immediately and never enter state, Neon, logs, SSE, audit export, browser code, or model context.
+
+The sponsor starter also lists `/payment-routes` and `/simulate/payment-routes`. Lazarus does not implement or claim that separate cross-rail flow; its Rain integration is the scoped-card path shown above.
 
 Rain receives amount, MCC, and expiry controls. Lazarus independently enforces exact merchant, quote, purpose, task scope, rights, budget, and one-use rules. The sandbox has no documented remote cancel route; completion disables local authority and relies on short expiry.
 
@@ -261,18 +274,22 @@ There are no browser proxy routes for Privy credentials, wallet signing, raw Rai
 ## End-to-end protected-preview checklist
 
 1. Rotate every credential previously exposed outside a secret manager.
-2. Keep public Production local-only with seller disabled and no Privy/Rain secrets.
+2. Keep public Production x402-local with seller disabled and no payer signer. Rain secrets are allowed only for the isolated-state hybrid sandbox profile.
 3. Enable Vercel Deployment Protection on the branch Preview.
 4. Scope every live variable to that branch Preview; use a unique `preview-*` state key.
-5. Create a dedicated Privy payer and a different receive-only payee.
-6. Attach a restrictive Privy wallet policy and fund the payer with only the capped test USDC.
+5. Create a dedicated low-value payer and a different receive-only payee; configure complete Privy (preferred) or one 32-byte raw key, never both.
+6. If Privy is selected, attach a restrictive policy. Fund the chosen payer with only the capped test USDC.
 7. Enable the durable seller, configure the protected availability base URL, and confirm Neon is connected.
 8. Confirm `/api/health` reports testnet buyer and seller truthfully while bounty writes remain false.
 9. Run only the bundled mission once. Retain the payment ID, settlement response, transaction hash, confirmations, exact Transfer evidence, and explorer link.
 10. Reconcile any uncertain result before changing the state key or retrying.
+<<<<<<< Updated upstream
 11. State the selected profile precisely: the x402 Preview keeps bargaining/provider local, while remote merchant Production keeps payments, bounty, verifier network, and reseeding local.
+=======
+11. State the selected profile precisely: the verified x402 Preview keeps bargaining/provider/bounty/verifiers/reseeding local but uses Rain sandbox for archive payment, while hybrid Production uses the remote merchant/provider and Rain sandbox but keeps x402/bounty/verifiers/reseeding local.
+>>>>>>> Stashed changes
 
-Rain is a separate demo path. Do not enable it until the rotated key and valid provider UUID are available.
+Rain is armed in the hybrid Production demo and was independently verified in its ledger: `$9.75` completed at MCC `5734`, while the deliberate `$9.00` MCC `5944` attempt was declined. It remains sandbox-only and requires an isolated Vercel state key.
 
 ## Path to production
 
@@ -284,4 +301,8 @@ Rain is a separate demo path. Do not enable it until the rotated key and valid p
 - Define real FX, fees, disclosures, refunds, custody, accounting, and reconciliation before claiming production multi-currency support.
 - Add isolated recovery workers, content controls, durable artifact storage, and real reseeding evidence.
 
+<<<<<<< Updated upstream
 Until then, the protected branch preview is a capped testnet demonstration, Rain remains an unarmed sandbox integration, and public production may perform authenticated merchant/provider calls but no live payment, bounty, or chain write.
+=======
+Until then, the protected branch Preview is a capped testnet demonstration; hybrid Production performs authenticated merchant/provider calls and Rain sandbox writes but no real-money, Monad-payment, bounty, or chain write. The full bounty, verifier network, and reseeding remain local in every profile.
+>>>>>>> Stashed changes
