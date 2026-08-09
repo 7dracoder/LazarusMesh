@@ -3,6 +3,7 @@ const { localId, localTxHash } = require("../lib/ids");
 class LocalX402Adapter {
   constructor({ clock = () => new Date() } = {}) {
     this.clock = clock;
+    this.mode = "local";
     this.receipts = new Map();
   }
 

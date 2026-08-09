@@ -3,6 +3,7 @@ const { localId, localTxHash } = require("../lib/ids");
 class LocalMonadAdapter {
   constructor({ clock = () => new Date() } = {}) {
     this.clock = clock;
+    this.mode = "local";
     this.sequence = 0;
     this.bounties = new Map();
   }

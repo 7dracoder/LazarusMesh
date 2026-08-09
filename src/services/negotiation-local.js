@@ -47,6 +47,14 @@ function clone(value) {
   return structuredClone(value);
 }
 
+function matchesDefaultTerms(terms) {
+  if (!terms || typeof terms !== 'object' || Array.isArray(terms)) return false;
+  const expectedKeys = Object.keys(DEFAULT_TERMS);
+  const actualKeys = Object.keys(terms);
+  return actualKeys.length === expectedKeys.length
+    && expectedKeys.every((key) => Object.hasOwn(terms, key) && terms[key] === DEFAULT_TERMS[key]);
+}
+
 class LocalNegotiationAdapter {
   constructor({ clock = () => new Date() } = {}) {
     this.clock = clock;
@@ -150,7 +158,7 @@ class LocalNegotiationAdapter {
       throw new NegotiationError('NON_IMPROVING_COUNTEROFFER', 'The buyer counter must improve on the current seller price.');
     }
     const normalizedTerms = terms === undefined ? { ...DEFAULT_TERMS } : clone(terms);
-    if (JSON.stringify(normalizedTerms) !== JSON.stringify(DEFAULT_TERMS)) {
+    if (!matchesDefaultTerms(normalizedTerms)) {
       throw new NegotiationError('NEGOTIATION_TERMS_NOT_SUPPORTED', 'The local merchant only accepts the bounded one-time recovery terms.');
     }
 

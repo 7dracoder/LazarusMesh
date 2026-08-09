@@ -46,15 +46,31 @@ The result saves `$2.25`, or `18.75%`, from the initial ask. A Rain card is crea
 | Provider collateral requirement | `$2.00` | Tracked separately in the local Monad ledger |
 | Default mission budget | `$20.00` | Budget ceiling |
 
-Successful mission spend is exactly `$9.76`: one cent for discovery plus `$9.75` for the archive purchase. The `$5.00` bounty is released cumulatively at 70%, 90%, and 100%, corresponding to `$3.50`, then `$1.00`, then `$0.50` incremental releases.
+Successful mission policy usage is exactly `$9.76`: one cent for discovery plus `$9.75` for the archive allocation. In local and deployed demo mode this is simulated accounting—`$0.00` is charged. With the minimum `$12.01` service cap, the UI therefore shows `$2.25` as **demo reserve remaining**. The Deal tab separately shows the same `$2.25` as **negotiated savings** from the `$12.00` ask; neither number means payment failed. The `$5.00` bounty is advanced locally at 70%, 90%, and 100%, corresponding to `$3.50`, then `$1.00`, then `$0.50` incremental demo-ledger entries.
 
 In `rain-sandbox` mode, the adapter also simulates `$20.00` of rUSD collateral funding by default before its first card issuance. That is Rain sandbox setup, not mission spend, and no real funds move. Set `RAIN_AUTO_FUND_MINOR=0` only when the provisioned Rain contract already has enough sandbox collateral.
 
-## Run locally
+## Deploy to Vercel with free Postgres
 
-Requires Node.js 20 or later. There are no runtime package dependencies and no `npm install` step.
+The repository now includes a Vercel serverless API (`api/index.js`) and a free Neon Postgres integration. A Vercel rewrite sends every nested `/api/*` route to that function while preserving the route for the Node request handler. The deployment stores the complete demo audit snapshot in Postgres instead of `.data/state.json`, reloads it before each API request, and rebuilds the deterministic local adapter ledgers before a mission continues. The browser uses five-second polling on Vercel because long-lived SSE connections are not a reliable serverless transport.
+
+Deploy it from the repository root after accepting the Neon marketplace terms and connecting the integration in Vercel:
 
 ```sh
+vercel integration add neon --name lazarus-mesh-db --plan free_v3 -e production -e preview -e development -m region=iad1 -m auth=false
+vercel --prod
+```
+
+The integration supplies `DATABASE_URL` to Vercel automatically. Leave `ADAPTER_MODE` unset (or set it to `local`) for the hosted demo. Do not deploy the previously shared Rain credential: it must be rotated first, and the present Vercel runtime intentionally refuses `rain-sandbox` mode until external payment operations have a durable saga and reconciliation layer.
+
+This is a durable public **demo** deployment, not a live payment service. It runs the verified fixture, local bargain, local Monad ledger, local x402 handshake, and local scoped-card simulation. The current app has no user accounts or tenant isolation; do not add real funds, production cards, or wallet signing keys to this deployment.
+
+## Run locally
+
+Requires Node.js 20 or later.
+
+```sh
+npm install
 node server.js
 ```
 
@@ -161,7 +177,8 @@ See [docs/DEMO_SCRIPT.md](docs/DEMO_SCRIPT.md) for a four-minute presentation sc
 
 ```text
 Browser dashboard
-  -> loopback Node HTTP/REST/SSE server
+  -> local: loopback Node HTTP/REST/SSE server
+  -> Vercel: serverless API with same-origin mutation guard + polling
   -> mission orchestrator
      -> deterministic quote policy + spending policy
      -> local bargaining adapter
@@ -169,7 +186,8 @@ Browser dashboard
      -> local Monad bounty ledger
      -> local x402 handshake
      -> local recovery engine operating on real fixture bytes
-  -> JSON audit snapshot (.data/state.json)
+  -> local: JSON audit snapshot (.data/state.json)
+  -> Vercel: Neon Postgres JSONB audit snapshot (optimistic revision check)
 
 Optional read-only health path
   -> Monad testnet RPC eth_chainId
@@ -181,7 +199,10 @@ The browser uses plain HTML, CSS, and JavaScript. The server uses Node built-ins
 ## Important files
 
 ```text
-server.js                              HTTP, REST, SSE, adapter selection, health
+server.js                              HTTP, REST, SSE/polling selection, adapter selection, health
+api/index.js                           Vercel serverless API + durable request wrapper
+src/neon-state.js                      Neon Postgres JSONB state/revision repository
+src/rehydrate-local.js                 Rebuilds local demo adapter state per serverless request
 src/config.js                          .env loading and safe configuration mapping
 src/orchestrator.js                    Nine-step recovery and negotiation workflow
 src/demo-state.js                      Default mission, economics, and policies

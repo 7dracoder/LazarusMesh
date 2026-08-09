@@ -8,11 +8,11 @@ No secret, API-key, private-key, user-ID, team-ID, contract-ID, or card-data val
 
 Lazarus Mesh is a local-first demonstration of an autonomous recovery marketplace for legally authorized but unavailable digital artifacts. The default mission starts with a bundled CC0 rainfall dataset at zero seeders and demonstrates an agent that can:
 
-1. buy availability intelligence through a local x402-style handshake;
+1. simulate availability-intelligence allocation through a local x402-style handshake;
 2. bargain with a merchant inside a deterministic policy envelope;
-3. fund and claim a recovery bounty in a local Monad-style ledger;
+3. record and claim a demo recovery bounty in a local Monad-style ledger;
 4. create narrowly scoped payment authority through either a local Rain adapter or the external Rain sandbox;
-5. block unrelated spending and settle only the accepted quote;
+5. block unrelated spending and simulate only the accepted quote;
 6. recover and hash-check 24 real local data pieces;
 7. reconstruct the original artifact and verify its SHA-256 commitment;
 8. require a two-verifier quorum before reward release; and
@@ -36,7 +36,8 @@ The implementation has two supported adapter modes: `local` and `rain-sandbox`. 
 | Artifact recovery | Reads bundled fixture bytes, splits, hashes, verifies, and reconstructs them | The same local recovery engine | Real local bytes and real SHA-256/Merkle calculations; no peer-to-peer retrieval |
 | Verifier quorum | Scripted local identities | Scripted local identities | Simulated verifier independence |
 | Reseeding | Mission state changes to two seeders | The same | Simulated availability; no BitTorrent/IPFS seeding process starts |
-| Persistence | JSON audit snapshot plus in-memory adapter ledgers | The same | Local demo persistence; not a resumable payment or chain ledger |
+| Local persistence | JSON audit snapshot plus in-memory adapter ledgers | The same | Local CLI persistence only |
+| Vercel persistence | Free Neon Postgres JSONB snapshot | Free Neon Postgres JSONB snapshot | Durable deterministic-demo state; not a normalized payment or chain operation ledger |
 | Solidity contract | Reference source only | Reference source only | Not compiled, deployed, called, or audited by this application |
 
 The most important runtime boundary is:
@@ -51,7 +52,7 @@ Monad testnet access is read-only readiness checking only.
 
 ```mermaid
 flowchart TD
-    UI["Browser dashboard"] --> HTTP["Loopback Node HTTP / REST / SSE server"]
+    UI["Browser dashboard"] --> HTTP["Local Node server or Vercel serverless API"]
     HTTP --> ORCH["Nine-step mission orchestrator"]
     ORCH --> QP["Binding-quote policy"]
     ORCH --> PP["General payment policy"]
@@ -61,7 +62,7 @@ flowchart TD
     ORCH --> REC["Local recovery engine using real fixture bytes"]
     ORCH --> RAINLOCAL["Local Rain adapter"]
     ORCH --> RAINSANDBOX["Optional external Rain sandbox adapter"]
-    ORCH --> STORE["JSON audit snapshot"]
+    ORCH --> STORE["Local JSON or Vercel Neon audit snapshot"]
     HTTP -. "optional /api/health only" .-> RPC["Monad testnet eth_chainId"]
     HTTP -. "optional /api/health only" .-> FAC["x402 facilitator /supported"]
 ```

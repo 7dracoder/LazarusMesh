@@ -4,7 +4,7 @@
 
 Choose and state the mode accurately:
 
-- `ADAPTER_MODE=local`: every payment and chain action is local.
+- `ADAPTER_MODE=local`: every payment and chain action is a local simulation; `$0.00` is charged.
 - `ADAPTER_MODE=rain-sandbox`: Rain calls the external sandbox; bargaining, Monad execution, and x402 execution remain local. Configured Monad RPC and facilitator checks are read-only.
 
 In hybrid mode, confirm `/api/health` reports Rain authenticated before starting. Do not describe sandbox transactions as real money, and complete the mission before attempting a reset.
@@ -30,7 +30,7 @@ Select **Run full recovery**.
 
 ## 0:50–1:25 — Discovery and bargaining
 
-Point to the local x402 availability handshake and its `$0.01` receipt.
+Point to the local x402 availability handshake and its `$0.01` simulated allocation.
 
 Open the deal transcript:
 
@@ -46,7 +46,7 @@ Atlas accepts     $9.75
 
 ## 1:25–1:50 — Monad market coordination
 
-Show the `$5.00` bounty funded and the provider's `$2.00` collateral requirement.
+Show the `$5.00` demo bounty and the provider's `$2.00` simulated collateral requirement.
 
 Say explicitly:
 
@@ -56,7 +56,7 @@ Say explicitly:
 
 In local mode:
 
-“The local Rain adapter mirrors the same bounded response shape.”
+“The local Rain adapter mirrors the same bounded response shape. The `$9.75` is a simulated allocation and `$0.00` is charged.”
 
 In `rain-sandbox` mode:
 
@@ -65,13 +65,13 @@ In `rain-sandbox` mode:
 Show two outcomes:
 
 - an in-limit `$9.00` unrelated merchant/category attempt is declined and costs nothing;
-- the accepted `$9.75` archive quote is authorized and settled.
+- the accepted `$9.75` archive quote is simulated locally, or sandbox-settled only when explicitly presenting `rain-sandbox` mode.
 
 Explain the enforcement split accurately:
 
 “Lazarus policy binds the exact merchant, quote, purpose, one-use rule, and `$9.75` amount. The public Rain sandbox scoped-card fields enforce amount-with-buffer, MCC, and expiry. Rain's default 1.2× buffer can make the remote ceiling `$11.70`, so the exact quote remains an application-level invariant.”
 
-The mission's counted spend is now exactly `$9.76`: `$0.01` discovery plus `$9.75` archive access. The `$5.00` bounty is tracked separately.
+The mission's policy usage is now exactly `$9.76`: `$0.01` discovery plus `$9.75` archive access. In local mode this is simulated accounting and the screen explicitly shows `$0.00 charged`; the `$5.00` demo bounty is tracked separately.
 
 ## 2:25–3:15 — Recover and verify
 
@@ -94,7 +94,7 @@ In local mode, the card retires immediately. In Rain sandbox mode, Lazarus disab
 
 ## 3:40–4:00 — Close
 
-“Rain gives the agent bounded access to the existing card ecosystem. Monad models the open recovery market and proof-conditioned rewards. In this release Rain runs against its external sandbox, while Monad and x402 execution stay local and auditable. One requester pays, but everyone regains access to the data.”
+“Rain models bounded access to the existing card ecosystem. Monad models the open recovery market and proof-conditioned rewards. This hosted demo keeps Rain, Monad, and x402 execution local and auditable, so no real funds move while everyone can see the recovery flow.”
 
 Closing line:
 

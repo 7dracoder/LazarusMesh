@@ -272,7 +272,14 @@ class LazarusOrchestrator {
         timestamp: receipt.timestamp,
       });
       await this.executeNegotiation(mission);
-      this.addEvent(mission, "x402", "Availability intelligence purchased", "Agent completed an HTTP 402 availability-discovery handshake and found Atlas Archive Node; bargaining happened in a separate quote session.");
+      this.addEvent(
+        mission,
+        "x402",
+        this.x402.mode === "local" ? "Availability handshake simulated" : "Availability intelligence purchased",
+        this.x402.mode === "local"
+          ? "The local HTTP 402 demo handshake found Atlas Archive Node. No token was signed or transferred."
+          : "Agent completed an HTTP 402 availability-discovery handshake and found Atlas Archive Node; bargaining happened in a separate quote session.",
+      );
       return;
     }
 
@@ -284,15 +291,27 @@ class LazarusOrchestrator {
         rewardMinor: mission.budget.rewardMinor,
         stakeMinor: mission.budget.stakeMinor,
       });
-      this.transition(mission, "FUNDED", "Bounty funded on Monad");
+      this.transition(
+        mission,
+        "FUNDED",
+        this.monad.mode === "local" ? "Bounty recorded in local demo ledger" : "Bounty funded on Monad",
+      );
       mission.availability = 12;
       this.addChainTransaction(mission, receipt);
-      this.addEvent(mission, "Monad", "Recovery bounty funded", `$${(mission.budget.rewardMinor / 100).toFixed(2)} USDC escrowed under content root ${mission.contentRoot.slice(0, 12)}…`);
+      this.addEvent(
+        mission,
+        "Monad",
+        this.monad.mode === "local" ? "Demo bounty recorded" : "Recovery bounty funded",
+        this.monad.mode === "local"
+          ? `$${(mission.budget.rewardMinor / 100).toFixed(2)} demo reward recorded under content root ${mission.contentRoot.slice(0, 12)}… No USDC moved.`
+          : `$${(mission.budget.rewardMinor / 100).toFixed(2)} USDC escrowed under content root ${mission.contentRoot.slice(0, 12)}…`,
+      );
       return;
     }
 
     if (step === 3) {
       const quote = mission.negotiation.acceptedQuote;
+      const localPaymentSimulation = this.rain.mode === "local";
       if (!quote) {
         const error = new Error("A binding merchant quote is required before payment authority can be created.");
         error.statusCode = 409;
@@ -454,11 +473,37 @@ class LazarusOrchestrator {
       mission.budget.spentMinor += allowed.amountMinor;
       mission.negotiation.status = "consumed";
       mission.negotiation.consumedAt = allowed.checkedAt;
-      this.transition(mission, "RECOVERING", "Negotiated archive access purchased");
+      this.transition(
+        mission,
+        "RECOVERING",
+        localPaymentSimulation ? "Negotiated archive access simulated" : "Negotiated archive access sandbox-settled",
+      );
       mission.availability = 16;
-      this.addEvent(mission, "Rain", "Unauthorized purchase blocked", `An in-limit $9.00 unrelated-merchant purchase was denied: ${blocked.code}.`, "blocked");
-      this.addEvent(mission, "Rain", "Negotiated archive quote settled", `Scoped card •••• ${card.lastFour} settled $${(quote.amountMinor / 100).toFixed(2)} at approved MCC ${quote.mcc}, bound to quote ${quote.quoteId.slice(0, 14)}…`);
-      this.addEvent(mission, "Monad", "Provider claimed bounty", "Atlas Archive Node posted local collateral and committed to recovery.");
+      this.addEvent(
+        mission,
+        "Rain",
+        localPaymentSimulation ? "Policy safety test passed" : "Unauthorized purchase blocked",
+        localPaymentSimulation
+          ? `Local policy simulation blocked the unrelated $9.00 purchase as designed: ${blocked.code}. No funds moved.`
+          : `An in-limit $9.00 unrelated-merchant purchase was denied: ${blocked.code}.`,
+        "blocked",
+      );
+      this.addEvent(
+        mission,
+        "Rain",
+        localPaymentSimulation ? "Archive purchase simulated" : "Negotiated archive quote sandbox-settled",
+        localPaymentSimulation
+          ? `Local scoped-card policy simulated the $${(quote.amountMinor / 100).toFixed(2)} archive allocation at MCC ${quote.mcc}. $0.00 was charged.`
+          : `Scoped card •••• ${card.lastFour} sandbox-settled $${(quote.amountMinor / 100).toFixed(2)} at approved MCC ${quote.mcc}, bound to quote ${quote.quoteId.slice(0, 14)}…`,
+      );
+      this.addEvent(
+        mission,
+        "Monad",
+        this.monad.mode === "local" ? "Demo provider claim recorded" : "Provider claimed bounty",
+        this.monad.mode === "local"
+          ? "Atlas Archive Node committed to recovery in the local ledger; no collateral or token moved."
+          : "Atlas Archive Node posted collateral and committed to recovery.",
+      );
       return;
     }
 
@@ -506,11 +551,22 @@ class LazarusOrchestrator {
       );
       const release = await this.monad.releaseTranche(mission.id, 70, "recovery");
       mission.budget.releasedMinor = release.totalReleasedMinor;
-      this.transition(mission, "VERIFIED", "Artifact verified — reward released");
+      this.transition(
+        mission,
+        "VERIFIED",
+        this.monad.mode === "local" ? "Artifact verified — demo reward advanced" : "Artifact verified — reward released",
+      );
       mission.availability = 94;
       this.addChainTransaction(mission, attestationReceipt);
       this.addChainTransaction(mission, release);
-      this.addEvent(mission, "Monad", "Recovery tranche released", "Verifier quorum matched the complete SHA-256 root; 70% of bounty released.");
+      this.addEvent(
+        mission,
+        "Monad",
+        this.monad.mode === "local" ? "Demo recovery tranche recorded" : "Recovery tranche released",
+        this.monad.mode === "local"
+          ? "Verifier quorum matched the complete SHA-256 root; the local ledger advanced the demo reward to 70%."
+          : "Verifier quorum matched the complete SHA-256 root; 70% of bounty released.",
+      );
       return;
     }
 
@@ -522,7 +578,14 @@ class LazarusOrchestrator {
       this.transition(mission, "RESEEDED", "Restored to two independent seeders");
       mission.availability = 100;
       this.addChainTransaction(mission, release);
-      this.addEvent(mission, "Recovery network", "Artifact resurrected", "Availability changed from zero to two complete seeders; retention tranche released.");
+      this.addEvent(
+        mission,
+        "Recovery network",
+        "Artifact resurrected",
+        this.monad.mode === "local"
+          ? "Availability changed from zero to two complete seeders; the local ledger recorded the retention milestone."
+          : "Availability changed from zero to two complete seeders; retention tranche released.",
+      );
       return;
     }
 
@@ -539,7 +602,14 @@ class LazarusOrchestrator {
       } else {
         this.addEvent(mission, "Rain", "Scoped card retired", "Payment authority removed immediately after mission completion.");
       }
-      this.addEvent(mission, "Lazarus Mesh", "Mission completed", "Dead data is live again. Payment, proof, and recovery receipts reconciled.");
+      this.addEvent(
+        mission,
+        "Lazarus Mesh",
+        "Mission completed",
+        this.monad.mode === "local"
+          ? "Dead data is live again. Demo allocations, proofs, and recovery receipts reconciled with $0.00 charged."
+          : "Dead data is live again. Payment, proof, and recovery receipts reconciled.",
+      );
     }
   }
 

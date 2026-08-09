@@ -46,6 +46,9 @@
     emptyState: $("#empty-state"),
     missionList: $("#mission-list"),
     missionCount: $("#mission-count"),
+    budgetLabel: $("#budget-label"),
+    railsEyebrow: $("#rails-eyebrow"),
+    railsHeading: $("#rails-heading"),
     connectionChip: $("#connection-chip"),
     connectionLabel: $("#connection-label"),
     networkLabel: $("#network-label"),
@@ -621,6 +624,8 @@
     const budget = budgetFor(mission);
     const remaining = Math.max(0, budget.total - budget.spent);
     const stage = normalizeStage(mission);
+    const financialExecution = asObject(app.data.system?.financialExecution);
+    const demoOnly = financialExecution.realFunds !== true;
 
     $("#availability-value").textContent = `${availability}%`;
     $("#availability-bar").style.width = `${availability}%`;
@@ -637,7 +642,10 @@
         ? "Single recovery source"
         : "Artifact offline";
     $("#budget-value").textContent = displayMoney(remaining);
-    $("#budget-detail").textContent = `${displayMoney(budget.spent)} spent · ${displayMoney(budget.reward)} bounty`;
+    if (elements.budgetLabel) elements.budgetLabel.textContent = demoOnly ? "Demo reserve remaining" : "Budget remaining";
+    $("#budget-detail").textContent = demoOnly
+      ? `${displayMoney(budget.spent)} simulated allocation · $0.00 charged`
+      : `${displayMoney(budget.spent)} spent · ${displayMoney(budget.reward)} bounty`;
 
     if (stage === "RESEEDED") {
       $("#availability-value").textContent = "100%";
@@ -766,6 +774,9 @@
     const x402Runtime = asObject(system.x402 ?? system.integrations?.x402 ?? system.adapters?.x402);
     const monadWrites = monadRuntime.writesEnabled === true || healthAdapters.monad?.writesEnabled === true;
     const x402Live = x402Runtime.liveSettlementEnabled === true || healthAdapters.x402?.liveSettlementEnabled === true;
+    const financialExecution = asObject(system.financialExecution);
+    const demoOnly = financialExecution.realFunds !== true;
+    const rainExternal = system.rain?.external === true;
     const rain = latestMatching(allRecords, ["rain", "card"]);
     const x402 = latestMatching(allRecords, ["x402"]);
     const monad = latestMatching(transactions, ["monad", "escrow", "contract", "chain"])
@@ -773,12 +784,20 @@
     const budget = budgetFor(mission);
     const stage = normalizeStage(mission);
 
+    if (elements.railsEyebrow) elements.railsEyebrow.textContent = demoOnly ? "Demo treasury" : "Agent treasury";
+    if (elements.railsHeading) elements.railsHeading.textContent = demoOnly ? "Simulated payment rails" : "Payment rails";
+
     updateRail("rain", rain, {
       idleState: "Standby",
       activeState: "Card authorized",
-      description: "Scoped card for legacy archive access",
-      idleAmount: "$0.00 spent",
-      amountSuffix: " spent",
+      activeStateOverride: demoOnly ? (rainExternal ? "Sandbox simulated" : "Simulated locally") : null,
+      description: demoOnly
+        ? rainExternal
+          ? "Rain sandbox authorization simulation · no real funds"
+          : "Local card-policy simulation · no funds moved"
+        : "Scoped card for legacy archive access",
+      idleAmount: demoOnly ? "$0.00 simulated" : "$0.00 spent",
+      amountSuffix: demoOnly ? " simulated" : " spent",
       failedSuffix: " blocked",
     });
     const rainCardState = String(mission.rainCard?.state ?? "").trim().toLowerCase();
@@ -1124,7 +1143,7 @@
             <div><small>Initial ask</small><strong>${displayMinor(askMinor)}</strong></div>
             <span class="deal-arrow" aria-hidden="true">→</span>
             <div class="is-accepted"><small>Accepted</small><strong>${displayMinor(acceptedMinor)}</strong></div>
-            <div class="deal-savings"><small>Savings</small><strong>${displayMinor(savingsMinor)} <span>· ${escapeHtml(savingsPercent)}</span></strong></div>
+            <div class="deal-savings"><small>Negotiated savings</small><strong>${displayMinor(savingsMinor)} <span>· ${escapeHtml(savingsPercent)}</span></strong></div>
           </div>
           <dl class="deal-meta">
             <div><dt>Merchant</dt><dd>${escapeHtml(merchantName)}</dd></div>
@@ -1150,8 +1169,16 @@
   function renderReceiptAudit(mission) {
     const payments = asArray(mission.payments).map((record) => ({ ...record, __origin: "Payment" }));
     const transactions = asArray(mission.transactions).map((record) => ({ ...record, __origin: "Transaction" }));
+    const seenReferences = new Set();
     const records = [...payments, ...transactions]
       .sort((left, right) => recordTimestamp(right) - recordTimestamp(left))
+      .filter((record) => {
+        const reference = recordReference(record);
+        if (reference === "No receipt") return true;
+        if (seenReferences.has(reference)) return false;
+        seenReferences.add(reference);
+        return true;
+      })
       .slice(0, 7);
     const content = $("#audit-content");
 
@@ -1169,20 +1196,40 @@
     const x402Runtime = asObject(system.x402 ?? system.integrations?.x402 ?? system.adapters?.x402);
     const monadWrites = monadRuntime.writesEnabled === true || healthAdapters.monad?.writesEnabled === true;
     const x402Live = x402Runtime.liveSettlementEnabled === true || healthAdapters.x402?.liveSettlementEnabled === true;
+    const demoOnly = asObject(system.financialExecution).realFunds !== true;
+    const rainExternal = system.rain?.external === true;
 
     content.innerHTML = `<dl class="audit-list">${records.map((record) => {
       const recordText = recordSearch(record);
       const isX402 = /x402/.test(recordText);
       const isMonad = /monad|escrow|contract|chain/.test(recordText);
-      const locallySimulated = (isX402 && !x402Live) || (isMonad && !monadWrites);
-      const label = locallySimulated
-        ? isX402 ? "x402 local simulation" : "Monad local ledger"
+      const isRain = /rain|card/.test(recordText);
+      const policySafetyTest = isRain && statusIsFailure(record) && (
+        record.code === "MERCHANT_NOT_ALLOWED"
+        || record.applicationCode === "MERCHANT_NOT_ALLOWED"
+        || /blocked|unapproved/.test(recordText)
+      );
+      const locallySimulated = (isX402 && !x402Live) || (isMonad && !monadWrites) || (isRain && demoOnly);
+      const label = policySafetyTest
+        ? "Policy safety test"
+        : locallySimulated
+        ? isX402
+          ? "x402 local simulation"
+          : isMonad
+            ? "Monad local ledger"
+            : rainExternal
+              ? "Rain sandbox simulation"
+              : "Rain local simulation"
         : titleCase(record.rail ?? record.provider ?? record.type ?? record.__origin);
       const reference = recordReference(record);
       const failed = statusIsFailure(record);
       const reportedStatus = recordStatus(record, failed ? "Blocked" : "Confirmed");
       const pending = /pending|created|requested|processing/i.test(reportedStatus);
-      const status = locallySimulated && !failed && !pending ? "Simulated" : reportedStatus;
+      const status = policySafetyTest
+        ? "Blocked as designed"
+        : locallySimulated && !failed && !pending
+          ? "Simulated"
+          : reportedStatus;
       return `
         <div class="audit-row">
           <dt>${escapeHtml(label)}</dt>
@@ -1278,7 +1325,14 @@
     });
     const payload = await parseResponse(response);
     if (!response.ok) {
-      const error = new Error(payload?.message ?? payload?.error ?? `Request failed (${response.status})`);
+      const message = typeof payload?.message === "string"
+        ? payload.message
+        : typeof payload?.error === "string"
+          ? payload.error
+          : typeof payload?.error?.message === "string"
+            ? payload.error.message
+            : `Request failed (${response.status})`;
+      const error = new Error(message);
       error.status = response.status;
       error.payload = payload;
       throw error;
@@ -1327,7 +1381,7 @@
     } catch (error) {
       setConnection("offline", "Offline");
       if (!quiet || !app.hasShownConnectionError) {
-        showToast("Local server unavailable", error.message, "error", 6000);
+        showToast("Service unavailable", error.message, "error", 6000);
         app.hasShownConnectionError = true;
       }
       if (!app.data.missions.length) render();
@@ -1365,7 +1419,7 @@
       if (!applyState(payload)) await loadState({ quiet: true });
       showToast(successTitle, action === "blocked-purchase"
         ? "Rain policy rejected the out-of-scope purchase as designed."
-        : "Mission state synchronized with the local orchestrator.");
+        : "Mission state synchronized with the recovery orchestrator.");
     } catch (error) {
       showToast("Mission action failed", error.message, "error", 6000);
     } finally {
@@ -1627,6 +1681,14 @@
   }
 
   function connectEventStream() {
+    if (app.data.system?.deployment?.eventTransport === "polling") {
+      app.eventSource?.close();
+      app.eventSource = null;
+      startPolling();
+      setConnection("online", "Polling every 5 seconds");
+      loadHealth();
+      return;
+    }
     if (!("EventSource" in window)) {
       startPolling();
       return;
