@@ -365,9 +365,12 @@ class LazarusOrchestrator {
         externalEndpoint: receipt.externalEndpoint === true,
       });
       if (this.x402.mode !== "local") {
+        // Do not checkpoint the confirmed receipt while stepIndex is still 0.
+        // step() persists the receipt, cleared gate, negotiation, and stepIndex
+        // together; a failure before that leaves the durable pending gate in
+        // place for explicit reconciliation instead of a half-applied step.
         delete mission.externalOperations.x402Pending;
         if (Object.keys(mission.externalOperations).length === 0) delete mission.externalOperations;
-        await this.checkpoint();
       }
       await this.executeNegotiation(mission);
       this.addEvent(

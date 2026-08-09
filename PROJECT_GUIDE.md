@@ -1,6 +1,6 @@
 # Lazarus Mesh — Complete Project Guide
 
-This document describes the code currently in the repository. It distinguishes mission accounting, local simulation, real local cryptographic work, external Rain sandbox activity, read-only readiness checks, and the opt-in Monad testnet x402 payment so demo claims remain accurate.
+This document describes the code currently in the repository. It distinguishes mission accounting, local simulation, real local cryptographic work, the currently unarmed Rain sandbox adapter, public local-only Production, and the Privy-backed one-shot Monad testnet Preview so demo claims remain accurate.
 
 No secret, API-key, private-key, user-ID, team-ID, contract-ID, or card-data value belongs in this guide. Configuration is documented by environment-variable name only.
 
@@ -26,30 +26,33 @@ This is not a general torrent search engine, an unrestricted purchasing agent, a
 
 ## 2. What is real, remote, and simulated
 
-The implementation has two independent selectors. `ADAPTER_MODE` chooses local Rain or Rain sandbox. `MONAD_EXECUTION_MODE` chooses the x402-shaped local discovery adapter or the real capped Monad testnet x402 buyer.
+The implementation has two independent selectors. `ADAPTER_MODE` chooses local Rain or Rain sandbox. `MONAD_EXECUTION_MODE` chooses the x402-shaped local discovery adapter or the real capped Monad testnet x402 buyer. Deployment policy further constrains which combinations may run on Vercel.
 
 | Capability | Local selection | External selection | Truthful status |
 | --- | --- | --- | --- |
 | Rain card/payment control | `ADAPTER_MODE=local` | `ADAPTER_MODE=rain-sandbox` makes authenticated Rain sandbox calls | Remote mode is still sandbox simulation, USD-only, and never a production card purchase |
 | Merchant bargaining | Deterministic local Atlas merchant | No external implementation | Structured local bargaining; no live merchant, chat, or merchant-signed quote |
-| x402 discovery payment | `MONAD_EXECUTION_MODE=local` is x402-shaped simulation | `MONAD_EXECUTION_MODE=x402-testnet` signs and verifies a capped official test-USDC transfer | Testnet mode is a real chain write; local mode has synthetic receipts only |
+| x402 discovery payment | `MONAD_EXECUTION_MODE=local` is x402-shaped simulation | `MONAD_EXECUTION_MODE=x402-testnet` signs and verifies a capped official test-USDC transfer | Public Production is local; testnet is restricted to a protected one-shot Preview or access-controlled local run |
+| x402 availability seller | Disabled | Protected seller with facilitator settlement and Neon replay state | Co-located with the live Preview; disabled in public Production |
+| Payer/payee wallets | None | Privy server-wallet payer plus distinct receive-only payee | Vercel stores no raw payer key and needs no payee secret |
 | Monad bounty lifecycle | In-memory local bounty ledger | No external implementation | Bounty receipt hashes are synthetic in every mode; the registry is not deployed/called |
 | Monad/x402 network readiness | Optional read-only health probe | Same probe | Real reads when both origins are configured; probe success does not authorize payment |
 | Artifact recovery | Reads bundled fixture bytes, splits, hashes, verifies, and reconstructs them | No external implementation | Real local bytes and real SHA-256/Merkle calculations; no peer-to-peer retrieval |
 | Verifier quorum | Scripted local identities | No external implementation | Simulated verifier independence |
 | Reseeding | Mission state changes to two seeders | No external implementation | Simulated availability; no BitTorrent/IPFS seeding process starts |
 | Local persistence | JSON audit snapshot plus in-memory adapter ledgers | Same | Local CLI persistence is not a durable external-operation journal |
-| Vercel persistence | Free Neon Postgres JSONB snapshot | External modes are rejected | Durable deterministic-demo state; not a normalized payment/chain ledger |
+| Vercel persistence | Free Neon Postgres JSONB snapshot | Preview also stores x402 settlement/replay records | Public Production is local-only; Preview uses isolated state and durable payment IDs |
 | Solidity contract | Reference source only | No writer adapter | Not compiled, deployed, called, or audited by this application |
 
 The most important runtime boundary is:
 
 ```text
-Rain sandbox can make authenticated sandbox calls and accepts USD missions only.
-Monad x402 testnet can move capped official test USDC. Its buyer authorization is gasless;
-the submitting seller/facilitator uses MON for Monad gas.
+Rain sandbox code can make authenticated sandbox calls and accepts USD missions only,
+but the current values are blocked pending a rotated key and valid provider-issued UUID.
+The protected Monad x402 Preview can move capped official test USDC. Its Privy-backed
+buyer authorization is gasless; the submitting seller/facilitator uses MON for gas.
 Bargaining, the full Monad bounty, recovery, verifier logic, and reseeding remain local.
-The public Vercel deployment remains local-only.
+Public Vercel Production remains entirely local-only.
 ```
 
 ## 3. Architecture and trust boundaries
@@ -63,12 +66,16 @@ flowchart TD
     ORCH --> NEG["Local deterministic merchant bargaining"]
     ORCH --> X402["x402-shaped local simulation"]
     ORCH --> X402LIVE["Optional Monad testnet x402 buyer"]
+    X402LIVE --> PRIVY["Restricted Privy payer server wallet"]
+    X402LIVE --> X402SELLER["Protected co-located x402 seller"]
+    X402SELLER --> PAYEE["Distinct receive-only payee"]
+    X402SELLER --> SETTLESTORE["Neon payment-ID settlement store"]
     ORCH --> MONAD["Local Monad-style bounty ledger"]
     ORCH --> REC["Local recovery engine using real fixture bytes"]
     ORCH --> RAINLOCAL["Local Rain adapter"]
     ORCH --> RAINSANDBOX["Optional external Rain sandbox adapter"]
     ORCH --> STORE["Local JSON or Vercel Neon audit snapshot"]
-    X402LIVE --> SELLER["HTTPS x402 seller/facilitator boundary"]
+    X402SELLER --> FACSETTLE["x402 facilitator verify/settle"]
     X402LIVE --> RPC["Monad testnet RPC and receipt verification"]
     HTTP -. "optional readiness" .-> RPC
     HTTP -. "optional /api/health only" .-> FAC["x402 facilitator /supported"]
@@ -81,6 +88,9 @@ flowchart TD
 | Payment policy | Revalidates the exact spend against rights, rail, merchant, MCC, purpose, count, amount, budget, expiry, approval, duplicate, and kill-switch rules. |
 | Rain adapter | Creates and exercises narrow card-like authority. In hybrid mode, some controls are remote sandbox controls and others remain application controls. |
 | Monad adapters | `LocalMonadAdapter` always models the bounty. `MonadX402Adapter` can independently pay only for discovery on testnet. |
+| Privy signer | Accepts only the pinned EIP-3009 typed-data envelope and verifies the returned signature. Privy policy is an additional custody control. |
+| x402 seller | Requires payment IDs, durably binds them to payment/resource fingerprints, settles through the facilitator, and replays exact successes without charging twice. |
+| Vercel policy | Keeps Production local-only and allows live buyer/seller only on the protected branch Preview with one fixed mission. |
 | Currency policy | Keeps selected mission accounting separate from Rain USD/rUSD, x402 test USDC, and MON gas. |
 | Recovery hashes | Verify the actual local bytes against piece hashes, a Merkle root, and a full-artifact SHA-256. |
 | Verifiers | Supply the two passing attestations required by the local Monad adapter. Their independence is scripted, not decentralized. |
@@ -123,15 +133,19 @@ Only `local` and `rain-sandbox` are accepted. An unsupported `ADAPTER_MODE` fail
 
 Rain sandbox accepts USD mission accounting only. Use the local Rain adapter for EUR, GBP, CAD, or AUD demo accounting.
 
+The adapter is implemented, but the current sandbox values must not be used: the previously disclosed key needs rotation, and the supplied collateral/contract value is not a valid UUID. Keep `ADAPTER_MODE=local` until Rain provides both replacements. Never guess or edit a provider identifier into a plausible UUID.
+
 ### Monad x402 testnet mode
 
-Set `MONAD_EXECUTION_MODE=x402-testnet` only in an access-controlled local runtime. Provide a dedicated low-value payer key, credential-free HTTPS Monad RPC, a distinct payee address, and an HTTPS x402 seller base URL:
+Set `MONAD_EXECUTION_MODE=x402-testnet` only in an access-controlled local runtime or the explicitly armed Vercel branch Preview. Provide a dedicated low-value signer, credential-free HTTPS Monad RPC, a distinct receive-only payee address, and the protected x402 seller base URL:
 
 ```sh
 MONAD_EXECUTION_MODE=x402-testnet node server.js
 ```
 
-This can move official Monad test USDC. The EIP-3009 buyer authorization is gasless; the submitting seller/facilitator needs testnet MON for gas. It replaces only the availability-discovery adapter; the complete bounty registry remains local. An unsupported `MONAD_EXECUTION_MODE` fails startup. The public Vercel function rejects this mode.
+This can move official Monad test USDC. The EIP-3009 buyer authorization is gasless; the submitting seller/facilitator needs testnet MON for gas. It replaces only the availability-discovery adapter; the complete bounty registry remains local. An unsupported `MONAD_EXECUTION_MODE` fails startup.
+
+Public Vercel Production rejects this mode and disables the seller. The protected branch Preview requires a Privy payer, durable co-located seller, Vercel Deployment Protection, isolated `preview-*` state, exact one-cent price/cap, six confirmations, and the single bundled mission. Reset and arbitrary mission creation are disabled.
 
 ### Development and test commands
 
@@ -159,6 +173,8 @@ npm run check
 
 The adapter validates the base URL as HTTPS, validates UUID-shaped identifiers, and rejects missing/too-short API credentials before it can run.
 
+Current blocker: the disclosed sandbox key must be rotated and the collateral/contract value must be replaced by a valid provider-issued UUID before authenticated health or any sandbox mutation is attempted.
+
 ### Monad and x402 configuration
 
 | Variable | Current effect |
@@ -169,8 +185,12 @@ The adapter validates the base URL as HTTPS, validates UUID-shaped identifiers, 
 | `MONAD_RPC_URL` | Credential-free HTTPS origin for readiness and required live x402 chain/receipt checks. |
 | `X402_FACILITATOR_URL` | HTTPS origin whose `/supported` endpoint is checked. The buyer does not call the facilitator directly. |
 | `MONAD_PROBE_TIMEOUT_MS` | Readiness timeout; default `5000`. |
-| `X402_AVAILABILITY_BASE_URL` | Required HTTPS seller resource directory in `x402-testnet`. |
-| `MONAD_PRIVATE_KEY` | Dedicated server-side testnet payer key in `x402-testnet`; otherwise only its presence is reported. |
+| `X402_AVAILABILITY_BASE_URL` | Required HTTPS seller directory for local testnet mode. Vercel derives the co-located Preview `/api/x402/availability/` URL from its protected host. |
+| `PRIVY_APP_ID` | Privy server app identifier; all four Privy payer values are required together. |
+| `PRIVY_APP_SECRET` | Encrypted server-side Privy secret; Preview/branch scope only. |
+| `PRIVY_PAYER_WALLET_ID` | Dedicated low-value payer server-wallet ID; never returned to the browser. |
+| `PRIVY_PAYER_ADDRESS` | Public payer address used to verify returned signatures. |
+| `MONAD_PRIVATE_KEY` | Local-only signer fallback. Configure either it or Privy, never both; Vercel live mode forbids it. |
 | `MONAD_PAY_TO_ADDRESS` | Required distinct seller recipient in `x402-testnet`. |
 | `X402_EXPECTED_AMOUNT_ATOMIC` | Exact test-USDC price; default `10000` atomic units, or test USDC 0.01. |
 | `X402_MAX_PAYMENT_ATOMIC` | Payment cap; defaults to the expected amount and can never exceed 1 test USDC. |
@@ -182,8 +202,12 @@ The adapter validates the base URL as HTTPS, validates UUID-shaped identifiers, 
 | `X402_EXPECTED_PROVIDER_ID` | Expected paid-result provider; default `provider_atlas_archive`. |
 | `MONAD_BOUNTY_CONTRACT` | Readiness-presence metadata only; no writer uses it. |
 | `MONAD_USDC_ADDRESS` | Readiness-presence metadata only; live x402 pins official test USDC in code. |
+| `X402_SELLER_ENABLED` | Enables the durable seller only for protected Preview/local integration; Production keeps it false. |
+| `ALLOW_EXTERNAL_WRITES_ON_VERCEL` | Explicit live-Preview arm; must remain false in Production. |
+| `LIVE_PREVIEW_BRANCH` | Must exactly match Vercel's current Git branch. |
+| `LAZARUS_STATE_KEY` | Production uses `primary`; live Preview requires an isolated `preview-*` value. |
 
-The network probe runs only if **both** `MONAD_RPC_URL` and `X402_FACILITATOR_URL` are configured. Setting only one does not perform a partial probe. Probe reads remain separate from execution. In `x402-testnet`, `writesEnabled` means the availability payment can write; `bountyWritesEnabled` remains false.
+The network probe runs only if **both** `MONAD_RPC_URL` and `X402_FACILITATOR_URL` are configured. Setting only one does not perform a partial probe. Probe reads remain separate from execution. In `x402-testnet`, `writesEnabled` means the availability payment can write; `bountyWritesEnabled` remains false. The payee is receive-only: no payee private key belongs in configuration.
 
 ## 6. Default mission and economics
 
@@ -334,7 +358,7 @@ These are intentionally separate operations even though both occur in step 1.
 
 The x402 result's selected-currency equivalent of the USD 12.00 reference estimate is not a binding quote and cannot authorize Rain. Only the later merchant quote, after digest and policy validation, can become card scope.
 
-The local x402 receipt is idempotent in memory for mission/content-root identity, and its transaction hash is synthetic. Configuring only `X402_FACILITATOR_URL` enables the optional `/supported` readiness check; live settlement requires `MONAD_EXECUTION_MODE=x402-testnet` plus the complete buyer/seller configuration. Before signing, the live adapter durably stores a stable payment identifier and pending-payment record. Reset, fresh startup, and another authorization fail closed while it remains unresolved. Production still requires an operator reconciliation/clearance workflow and globally unique seller-side payment identifiers.
+The local x402 receipt is idempotent in memory for mission/content-root identity, and its transaction hash is synthetic. Configuring only `X402_FACILITATOR_URL` enables the optional `/supported` readiness check; live settlement requires `MONAD_EXECUTION_MODE=x402-testnet` plus the complete buyer/seller configuration. The live adapter builds, signs, validates, and encodes the authorization before creating durable state. It then stores the namespaced pending-payment record immediately before transmission. A signing/validation/persistence failure sends no paid request; an ambiguous post-transmission result leaves the gate in place, so reset, fresh startup, and another authorization fail closed. The protected seller durably enforces payment-ID uniqueness; production still requires operator reconciliation/clearance, horizontally safe locks, quotas, and normalized operation history.
 
 ## 9. Merchant bargaining
 
@@ -596,7 +620,29 @@ The adapter rejects duplicate bounties, invalid claims, missing/nonpassing quoru
 
 Before signing, it requires a fresh valid x402 v2 exact 402 response, verifies chain ID and payer balance, and requires the payment-identifier extension. It then signs one bounded EIP-3009 authorization, sends `PAYMENT-SIGNATURE` to the HTTPS seller, validates `PAYMENT-RESPONSE`, waits for confirmations, and independently verifies the exact official test-USDC `Transfer` from payer to the configured distinct payee.
 
-The x402 seller is responsible for facilitator verify/settle calls, pays Monad gas for the submitted settlement, and must enforce durable global uniqueness for the payment ID. Before signature creation, the buyer durably persists a pending-payment record; reset, restart into a fresh session, and repeat authorization are blocked until reconciliation. This mode can move test USDC, but the EIP-3009 authorization is gasless for the buyer. It is not mainnet or real-money production settlement.
+The x402 seller is responsible for facilitator verify/settle calls, uses a settlement submitter that pays Monad gas, and enforces durable global uniqueness for the namespaced payment ID. The buyer may create an unused signature, but it persists the global pending-payment gate immediately before sending anything to the seller; only the successful durable state-write/CAS winner can transmit. An ambiguous paid-request outcome keeps that gate blocked until reconciliation. This mode can move test USDC, but the EIP-3009 authorization is gasless for the buyer. It is not mainnet or real-money production settlement.
+
+### Privy payer and receive-only payee
+
+The protected Preview uses `PrivyServerWalletSigner` instead of a raw key. The payer is a dedicated low-value server wallet funded only with the required test USDC. The payee is a different receive-only wallet; the application needs only its public address and never needs its private key or seed phrase.
+
+A restrictive Privy wallet policy is the custody-side control. Before Privy is called, Lazarus independently permits only the exact `TransferWithAuthorization` schema, USDC name/version, Monad testnet, pinned token contract, configured payer/payee, capped positive amount, zero `validAfter`, short `validBefore`, and 32-byte nonce. The signing response is bounded and sanitized, and the returned signature must verify against the payer address.
+
+Privy configuration is all-or-nothing. The four payer variables must be present together. `MonadX402Adapter` accepts either a signer object or a raw private key; it rejects both together. Vercel live policy requires Privy and forbids the raw-key path.
+
+### Protected durable seller
+
+`MonadX402Seller` serves `GET /api/x402/availability/:contentRoot` only when explicitly enabled. It advertises one x402 v2 exact Monad-testnet USDC requirement, requires the payment-identifier extension, verifies/settles through the configured facilitator, and returns deterministic provider-availability metadata.
+
+`NeonX402SettlementStore` reserves each payment ID before settlement and binds it to a payment fingerprint and content root. The protected Preview derives the buyer's payment-ID namespace from its isolated state key, preventing deliberate new preview cycles from colliding in this global seller table. An exact settled replay returns the stored response and settlement header without another charge. Another payload/resource using the same ID conflicts. Processing or uncertain results stop with reconciliation required. If settlement may have succeeded but the replay record cannot be saved, the seller marks the outcome uncertain instead of pretending success.
+
+In the protected Vercel Preview, buyer and seller are co-located. The buyer uses an internal same-origin transport so it does not bypass Vercel Deployment Protection by calling the external preview URL. The HTTP seller route remains behind the same protection for protocol inspection. Public Production disables both buyer and seller.
+
+### Vercel one-shot policy
+
+The live Preview starts only when Vercel environment/target are Preview, the branch matches the explicit allowlist, external writes are armed, state uses a unique `preview-*` key, amount and cap are exactly 10,000 atomic test-USDC units, authorization is at most 300 seconds, confirmations are at least six, all Privy values exist, and no raw private key exists.
+
+Request hosts must match Vercel's deployment/branch hosts, and persisted state must contain only the bundled demo mission. The immutable mission uses a 30-day preview lifetime instead of the normal one-hour local session. Reset and mission creation return `LIVE_PREVIEW_ONE_SHOT`. Only one unresolved buyer payment is allowed across the state.
 
 ### Optional read-only readiness probe
 
@@ -703,7 +749,9 @@ Ordinary local server startup replaces stored state with a fresh coherent sessio
 
 Step 3 also checkpoints the snapshot immediately after external card creation, after the deliberate Rain challenge, and after the approved Rain settlement. These intermediate saves preserve the known external authority and transaction receipts if a later network operation or process interruption prevents the whole step from completing. Final spend, negotiation-consumption, lifecycle, and event accounting is saved when the step completes.
 
-These safeguards improve sandbox/testnet reconciliation, but `.data/state.json` is still an audit/debug snapshot rather than general crash-safe workflow resumption or an authoritative financial ledger. The live x402 buyer does durably write its pending record before signing and restores that block after reconstruction. It still needs an operator reconciliation/clearance workflow, normalized operation history, and seller-side global payment-ID uniqueness before production use.
+These safeguards improve sandbox/testnet reconciliation, but `.data/state.json` is still an audit/debug snapshot rather than general crash-safe workflow resumption or an authoritative financial ledger. The live x402 buyer durably writes its pending record immediately before paid transmission and restores that block after reconstruction.
+
+The protected seller uses a separate Neon table for durable payment-ID/fingerprint/content-root/status/result/settlement records. This provides exact-replay idempotency and explicit uncertain outcomes for the one-shot Preview; it does not replace an operator reconciliation/clearance workflow or normalized production operation history.
 
 The export endpoint returns a formatted mission audit containing the public mission, negotiation transcript, policy decisions, receipts, verifier state, and reconstruction result. It is locally useful but not tamper-proof because the same process controls state, adapters, and export.
 
@@ -714,8 +762,9 @@ The export endpoint returns a formatted mission audit containing the public miss
 | `GET` | `/api/health` | Reports runtime truth, Rain health, local/testnet execution status, and optional Monad/x402 readiness. Returns 503 when a configured external health dependency fails. |
 | `GET` | `/api/state` | Returns recursively sanitized public application state. |
 | `GET` | `/api/events` | Opens an SSE stream and immediately emits the current public state; later mutations broadcast new state events. |
-| `POST` | `/api/demo/reset` | Resets all local adapter ledgers and creates the default state; blocked by unexpired recorded Rain sandbox authority. |
-| `POST` | `/api/missions` | Creates a new bundled-fixture mission after rights, accounting-currency, budget, and reward validation. |
+| `GET` | `/api/x402/availability/:contentRoot` | Protected paid availability seller route; disabled in public Production. |
+| `POST` | `/api/demo/reset` | Resets local state; blocked by unresolved authority and disabled in the one-shot Preview. |
+| `POST` | `/api/missions` | Creates a bundled-fixture mission after validation; disabled in the one-shot Preview. |
 | `POST` | `/api/missions/:id/step` | Executes the next of nine actions. |
 | `POST` | `/api/missions/:id/run` | Runs every remaining action with a demo delay. |
 | `GET` | `/api/missions/:id/negotiation` | Reads the public negotiation record. |
@@ -732,6 +781,8 @@ The export endpoint returns a formatted mission audit containing the public miss
 - Negotiation reports local mode.
 - Recovery reports `verified-local-fixture`.
 - Configuration is exposed only as booleans such as `signerConfigured`, never raw values.
+- x402 health separately reports whether the protected seller is enabled.
+- Production reports a local buyer and disabled seller; protected Preview reports the testnet buyer plus seller while bounty writes remain false.
 
 ### Manual blocked-purchase endpoint
 
@@ -788,6 +839,8 @@ The mission form accepts a supported accounting currency plus content/license/pi
 
 This is defense in depth for a loopback demo, not user authentication. The app has no accounts, sessions, CSRF token, authorization roles, TLS termination, rate limiting, durable audit signing, or multi-tenant isolation and must not be exposed as a production service.
 
+The Vercel Preview instead relies on Vercel Deployment Protection for access control, plus exact branch/host/environment checks and the one-shot state gate. Host checks are not authentication. Public Production stays local-only and contains no payer or Rain secret.
+
 ### Secrets and payment data
 
 - Secrets remain server-side environment values.
@@ -796,6 +849,9 @@ This is defense in depth for a loopback demo, not user authentication. The app h
 - Provider response bodies and configured origins are not exposed as credential-bearing errors.
 - Private keys, API keys, card material, and raw recovery bytes must never be added to browser JavaScript, SSE, audit JSON, logs, model prompts, or blockchain calldata.
 - `.env` must remain ignored and uncommitted; use `.env.example` only for variable names/placeholders.
+- Privy app secret and payer wallet ID are branch-scoped server values. They never enter state or browser code.
+- The payee is receive-only and needs no stored private key.
+- Vercel live mode refuses `MONAD_PRIVATE_KEY`; a raw key is a local-only fallback.
 
 Credentials accidentally disclosed outside the repository should be rotated at their provider. Merely omitting them from documentation does not revoke them.
 
@@ -805,6 +861,7 @@ Credentials accidentally disclosed outside the repository should be rotated at t
 | --- | --- |
 | Unsupported adapter mode | Startup throws; no fallback. |
 | Invalid/missing Rain sandbox configuration | Hybrid startup throws `RAIN_INVALID_CONFIGURATION`. |
+| Current Rain credential set | Keep Rain disabled: rotate the exposed key and obtain a valid provider-issued collateral/contract UUID. |
 | Rain authentication/provider/network failure | Health returns 503 or the mission action fails with a sanitized Rain error; limited retries apply only to retryable failures. |
 | Configured Monad RPC/facilitator readiness mismatch | Health returns 503 when the paired readiness probe is configured; bounty execution remains local. |
 | Invalid/missing live x402 configuration | `x402-testnet` startup fails closed; no local fallback. |
@@ -812,6 +869,11 @@ Credentials accidentally disclosed outside the repository should be rotated at t
 | Insufficient test USDC | Payment fails before signing. |
 | Ambiguous x402 paid response/timeout | Outcome is marked unknown and must be reconciled by stable payment ID before retry; a blind automatic retry is refused. |
 | Invalid/unconfirmed Monad receipt | The payment is not represented as settled; operator reconciliation is required when funds may have moved. |
+| Privy typed data outside policy | Rejected before a signing request; no signature is produced. |
+| Invalid Privy response/signature | Sanitized failure; mismatched signature is rejected. |
+| Vercel live mode on Production/wrong branch/host/state/key | Runtime or request fails closed with a stable Vercel live-mode denial. |
+| Preview reset or mission creation | Rejected with `LIVE_PREVIEW_ONE_SHOT`. |
+| Seller payment-ID replay | Exact settled replay returns stored result; conflict/processing/uncertain state stops. |
 | Only one Monad probe origin configured | Probe does not run; health reports the network check unconfigured. |
 | Discovery not completed | Explicit negotiation returns `DISCOVERY_REQUIRED`. |
 | No binding quote | Step 3 returns `BINDING_QUOTE_REQUIRED`. |
@@ -827,7 +889,7 @@ Credentials accidentally disclosed outside the repository should be rotated at t
 | Corrupt JSON snapshot | Store creates an `.invalid-*` backup and fresh state. |
 | Server restart | Normally starts a fresh mission because in-memory ledgers cannot be rehydrated. Hybrid startup instead refuses with `RAIN_SANDBOX_AUTHORITY_UNRESOLVED` while the prior snapshot contains an unexpired `active` or `expiry_scheduled` Rain sandbox card. |
 
-There is no distributed transaction across Rain, x402, and application state. Card creation, the deliberate Rain challenge, and approved Rain settlement are checkpointed as soon as each external mutation returns, while the x402 buyer durably records stable pending identity before signing. A later crash or ambiguous response may still require reconciliation rather than rollback. An operator clearance workflow, normalized operation history, globally unique seller payment IDs, receipt reconciliation, webhook handling, and explicit recovery jobs are required before production use.
+There is no distributed transaction across Rain, x402, and application state. Card creation, the deliberate Rain challenge, and approved Rain settlement are checkpointed as soon as each external mutation returns, while the x402 buyer durably records stable pending identity immediately before transmission and the seller durably reserves payment IDs. A later crash or ambiguous response may still require reconciliation rather than rollback. An operator clearance workflow, normalized operation history, horizontally safe seller locks, receipt reconciliation, webhook handling, and explicit recovery jobs are required before production use.
 
 ## 21. Tests and QA
 
@@ -843,6 +905,9 @@ The Node suite covers local behavior and uses injected/fake network clients for 
 | `tests/monad-network.test.js` | Chain/facilitator readiness, strict origins, redirect safety, response limits, timeouts, and sanitized failures. |
 | `tests/services.test.js` | Local Rain scope, local Monad quorum/tranches, local x402 idempotency, and exact fixture reconstruction. |
 | `tests/x402-monad.test.js` | x402 v2 requirement validation, bounded signing, payment identifiers, receipt/transfer verification, wrong-policy cases, balance checks, and unknown outcomes using fakes. |
+| `tests/privy-signer.test.js` | Privy typed-data allowlist, request shape, secret redaction, returned-signature verification, and all-or-nothing configuration. |
+| `tests/x402-seller.test.js` | Protected seller requirements, durable payment-ID semantics, settlement/replay/conflict/uncertain outcomes, and buyer/seller protocol compatibility. |
+| `tests/vercel-policy.test.js` | Production denial, protected Preview arming, branch/host/state controls, one-shot behavior, and raw-key refusal. |
 | `tests/state-migrations.test.js` | Runtime-state migration and preservation of external-vs-synthetic evidence. |
 
 ```sh
@@ -861,7 +926,10 @@ server.js
   request security, static serving, and runtime truth metadata.
 
 src/config.js
-  Minimal .env loader plus Rain and Monad/x402 configuration mapping.
+  Minimal .env loader plus Rain, Monad/x402, and Privy-signer mapping.
+
+src/vercel-policy.js
+  Public-Production and one-shot protected-Preview execution policy.
 
 src/orchestrator.js
   Nine-step workflow, bargaining orchestration, quote/payment gates, run locks,
@@ -915,6 +983,21 @@ src/services/x402-local.js
 src/services/x402-monad.js
   Opt-in bounded x402 v2 buyer for official test USDC on Monad testnet,
   including payment-ID, policy, balance, and receipt-log verification.
+
+src/services/x402-internal-fetch.js
+  Preview-only origin/path-restricted in-process transport from the buyer to
+  its co-located protected seller.
+
+src/services/privy-signer.js
+  Privy server-wallet adapter with a strict EIP-3009 typed-data allowlist and
+  returned-signature verification.
+
+src/services/x402-seller.js
+  Protected x402 availability seller using the facilitator and required
+  payment-identifier extension.
+
+src/services/x402-seller-store.js
+  Durable Neon settlement/replay store plus test-only memory implementation.
 
 src/services/rain-local.js
   In-memory scoped-card creation, authorization, and retirement.
@@ -985,7 +1068,7 @@ Replace `LocalNegotiationAdapter` with a merchant/marketplace quote adapter whil
 
 ### Production x402 settlement
 
-The capped testnet buyer already validates version/scheme, network, official token, amount, recipient, resource, authorization window, payment identifier, seller settlement response, and exact confirmed transfer, and durably records the pending operation before signing. Production still requires managed custody, a reviewed operator reconciliation/clearance workflow, globally unique seller payment IDs, persisted paid results, horizontally safe locks, quotas, abuse controls, monitoring, incident response, and a reviewed mainnet/token/facilitator policy. The public Vercel deployment remains local-only.
+The capped testnet buyer already validates version/scheme, network, official token, amount, recipient, resource, authorization window, payment identifier, seller settlement response, and exact confirmed transfer, and durably records the pending operation immediately before paid transmission. The protected seller adds durable payment-ID reservation and replay. Production still requires managed custody, a reviewed operator reconciliation/clearance workflow, horizontally safe locks, quotas, abuse controls, monitoring, incident response, and a reviewed mainnet/token/facilitator policy. Public Vercel Production remains local-only.
 
 ### Live Monad bounty execution
 
@@ -994,6 +1077,8 @@ Compile, test, audit, and deploy the contract; implement a separate writer adapt
 ### Production Rain
 
 Move beyond sandbox simulation only after confirming production API contracts, issuer/compliance requirements, merchant/MCC behavior, webhooks, signed events, reversal/dispute semantics, card cancellation, quotas, and secure card-data handling. Keep application quote policy even where Rain adds more remote controls.
+
+Before even running the current sandbox path, rotate the previously disclosed credential and obtain a valid provider-issued collateral/contract UUID. Configuration validation is intentionally fail-closed.
 
 ### Production multi-currency
 
@@ -1033,4 +1118,4 @@ The safe local/public demo succeeds when all of the following are visible in sta
 
 That is the complete, truth-labeled behavior implemented by the current repository.
 
-An additional capped testnet acceptance run succeeds only when `x402-testnet` produces a real transaction hash, the expected official test-USDC `Transfer` is independently confirmed, and the payment ID/receipt/explorer evidence are retained. That testnet transaction proves paid discovery only; the bounty registry, merchant, provider network, verifier network, and reseeding remain local.
+An additional capped Preview acceptance run succeeds only when Vercel Deployment Protection is enabled, the one-shot gates hold, the Privy policy and code-level signer allowlist are active, the protected seller durably records the payment ID, `x402-testnet` produces a real transaction hash, the expected official test-USDC `Transfer` is independently confirmed, and the payment ID/receipt/explorer evidence are retained. That testnet transaction proves paid discovery only; the archive bargain/purchase, bounty registry, provider network, verifier network, and reseeding remain local.

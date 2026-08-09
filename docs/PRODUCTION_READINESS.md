@@ -1,126 +1,140 @@
 # Lazarus Mesh Production-Readiness Boundary
 
-Updated: 2026-08-08
+Updated: 2026-08-09
 
 ## Executive status
 
-Lazarus Mesh is a deployment-ready public demo plus access-controlled sandbox/testnet integration paths. It is **not** a production payment, foreign-exchange, wallet, marketplace, or recovery service.
+Lazarus Mesh is a deployment-ready public local demo plus a separately protected, one-shot Monad testnet preview. It is **not** a production payment, wallet, foreign-exchange, marketplace, or recovery service.
 
 | Component | Executed today | Production boundary |
 | --- | --- | --- |
-| Mission currencies | Fixed-reference accounting in USD, EUR, GBP, CAD, and AUD | No live FX feed, conversion, custody, fee/spread disclosure, refund FX, or financial ledger |
-| Rain | Local simulation or authenticated Rain sandbox calls for rUSD collateral setup, scoped-card issuance, authorization simulation, settlement simulation, reversal, and status lookup | USD-only hackathon sandbox; no production card program, signed webhooks, disputes/refunds, or immediate remote freeze/close |
-| Monad x402 | x402-shaped local simulation, or opt-in bounded x402 v2 test-USDC buyer on Monad testnet | Testnet path only; requires a dedicated payer, distinct payee, HTTPS seller, durable payment-ID uniqueness, and reconciliation |
-| Monad bounty | Local deterministic bounty ledger | `RecoveryBountyRegistry.sol` is not compiled, deployed, called, or audited by the app |
-| Bargaining | Deterministic policy-bounded local offers/counters and binding-quote validation | No authenticated merchant session or merchant-signed binding quote |
-| Recovery | Real hashing, piece verification, reconstruction, and root validation over the bundled CC0 fixture | No external provider transfer, durable artifact storage, independent verifier service, or persistent reseeding |
+| Mission currencies | Fixed-reference accounting in USD, EUR, GBP, CAD, and AUD | No live FX, conversion, custody, spread/fee disclosure, or refund reconciliation |
+| Rain | Implemented local and sandbox adapters | Sandbox is currently unarmed: the exposed key must be rotated and the supplied collateral/contract value is not a valid UUID |
+| Monad x402 buyer | Local simulation in Production; capped real test-USDC path in protected Preview | Preview only, one fixed mission, Privy signer, one-cent cap, six confirmations |
+| Monad x402 seller | Durable protected-Preview seller with Neon payment-ID records | Disabled in public Production; no unrestricted public paid endpoint |
+| Wallets | Dedicated Privy payer and distinct receive-only payee | Testnet-only; no payee secret is stored; no raw private key is accepted by Vercel live mode |
+| Monad bounty | Local deterministic bounty ledger | Reference Solidity is not compiled, deployed, called, or audited by the app |
+| Bargaining | Deterministic local offers/counters and quote policy | No authenticated merchant session or merchant signature |
+| Recovery | Real fixture hashing/reconstruction | No remote provider transfer, independent verifier, durable storage, or persistent reseeding |
 
-The public Vercel deployment uses free managed Neon Postgres for a versioned JSONB audit-state snapshot. It reloads that state before each request and rehydrates deterministic local adapters. That supports a durable public **local demo**; it is not an external-operation ledger.
+## Deployment safety model
 
-Vercel explicitly rejects `ADAPTER_MODE` other than `local` and `MONAD_EXECUTION_MODE` other than `local`. It must not receive Rain credentials, payer keys, production cards, real funds, or live financial traffic. Browser mutations require same-origin requests, but the app still has no user authentication, tenant isolation, RBAC, rate limiting, or production reconciliation.
+### Public Production
+
+Production is fully local-only:
+
+- `ADAPTER_MODE=local`;
+- `MONAD_EXECUTION_MODE=local`;
+- `X402_SELLER_ENABLED=false`;
+- `ALLOW_EXTERNAL_WRITES_ON_VERCEL=false`;
+- no Privy payer or Rain secrets; and
+- the primary Neon state key.
+
+It can create/reset demo missions, bargain locally, simulate payment rails, verify fixture bytes, and persist the sanitized demo state. It cannot sign, settle, receive, or verify a live payment.
+
+### Protected branch Preview
+
+The live testnet Preview is allowed only when all controls agree:
+
+1. Vercel identifies both environment and target as Preview.
+2. Vercel Deployment Protection is enabled.
+3. The current Git branch exactly matches the configured live branch.
+4. External writes are explicitly armed.
+5. State uses a unique `preview-*` key, namespaces payment IDs with that key, and contains only the bundled mission.
+6. Price and cap are both exactly 10,000 atomic test-USDC units.
+7. Authorization is no longer than 300 seconds and confirmations are at least six.
+8. All Privy payer variables exist and no raw private key exists.
+9. Buyer and receive-only payee are different addresses.
+10. The durable x402 seller and Neon settlement store are enabled in the same protected deployment.
+
+The preview disables reset and arbitrary mission creation and gives its immutable mission a 30-day demo lifetime. The buyer uses an internal same-origin seller transport to avoid bypassing Vercel Deployment Protection; the HTTP seller route remains behind that protection.
+
+Host/branch checks and one-shot state are defense in depth. They do not replace deployment authentication, Privy policy, application policy, budget caps, or operator monitoring.
+
+## Wallet and signing boundary
+
+The Privy payer holds only the test USDC required for the demo. The payee is receive-only from the application's perspective, so Vercel needs only its public address—not its seed phrase, private key, or wallet API secret.
+
+Attach a restrictive Privy wallet policy. Lazarus independently rejects any typed data that is not the exact approved EIP-3009 `TransferWithAuthorization` envelope. It pins schema, Monad testnet, test-USDC domain/contract, payer, payee, amount cap, nonce, and short lifetime, then verifies Privy's returned signature against the configured payer.
+
+A leaked Privy app secret could still be dangerous within whatever Privy policy allows. Keep it encrypted, preview/branch-scoped, rotated, monitored, and out of production.
 
 ## Currency boundary
 
-The mission selector supports USD, EUR, GBP, CAD, and AUD through the fixed `lazarus-demo-reference-v1` table. Those values are deterministic demo references, not current market rates. Required reserves and debits round conservatively.
+Mission accounting and settlement are different layers:
 
-Accounting currency is separate from settlement asset:
+- USD/EUR/GBP/CAD/AUD are fixed demo accounting currencies;
+- Rain sandbox, once configured, accepts USD and uses sandbox rUSD collateral;
+- x402 settles the pinned Monad test-USDC token; and
+- MON pays settlement-submitter gas.
 
-- local adapters simulate all value;
-- Rain sandbox missions must use USD and collateral setup uses sandbox rUSD;
-- opt-in Monad x402 settles official Monad test USDC; its EIP-3009 buyer authorization is gasless, while the submitting seller/facilitator uses MON for gas; and
-- the local Monad bounty records selected mission currency plus synthetic settlement references without moving tokens.
+The selector does not exchange currency or make the external rail multi-currency. A production multi-currency product still needs authoritative rates, price locks, spreads/fees, rounding, provider-supported settlement currencies, treasury/custody, disclosures, refunds, disputes, tax/accounting treatment, and reconciliation.
 
-Supporting a production multi-currency product would require provider-supported settlement currencies, authoritative FX sources, price-lock windows, fee/spread disclosures, rounding policy, treasury/custody, refunds, disputes, tax/accounting treatment, and end-to-end reconciliation.
+## Rain activation blocker
 
-## Runtime modes and truth labels
+The code validates provider-issued UUIDs and fails closed. The currently supplied collateral/contract value is not UUID-valid, and the previously shared API key must be rotated. Therefore:
 
-| Configuration | External action possible | Required label |
-| --- | --- | --- |
-| `ADAPTER_MODE=local`, `MONAD_EXECUTION_MODE=local` | None during mission execution | Local deterministic demo |
-| `ADAPTER_MODE=rain-sandbox` | Rain sandbox writes | Hybrid sandbox; no real funds |
-| `MONAD_EXECUTION_MODE=x402-testnet` | Capped official test-USDC transfer on Monad testnet | Testnet x402 plus local bounty |
-| Both external selections | Rain sandbox calls plus capped Monad x402 testnet payment | Access-controlled integration demo; not production |
-| Public Vercel | External selections rejected | Public local-only demo |
+- leave Rain disabled in Vercel and local demos by default;
+- never guess or transform the identifier;
+- obtain a new sandbox key and valid UUID from Rain;
+- store them only in an access-controlled server-side secret manager; and
+- run authenticated health before the first sandbox mutation.
 
-`MONAD_EXECUTION_MODE=x402-testnet` swaps only availability discovery. It does not activate the bounty registry, merchant API, provider network, verifier network, or reseeding service.
+The adapter being implemented and unit-tested is not proof that the current Rain tenant is authenticated or funded.
 
-Do not say a real transaction occurred unless a specific run produced a confirmed transaction hash and the exact official test-USDC `Transfer` was independently verified. The presence of configuration or a successful readiness probe is not transaction evidence.
+## x402 crash safety and idempotency
 
-## Mission-creation contract
+The buyer builds, signs, validates, and encodes the authorization first, then persists an unresolved operation immediately before any paid seller request. Concurrent requests may create unused signatures, but only the durable state-write/CAS winner can transmit. A definitive signing, validation, encoding, or persistence failure sends no paid request. Only one unresolved transmitted buyer payment may exist across the state. Ambiguous post-transmission results block reset, fresh payment, and automatic retry until reconciled.
 
-The mission form and API publish currency-specific limits through `state.system.missionCreation`. The USD reference limits are:
+The seller reserves each namespaced payment ID in Neon before settlement and binds it to a fingerprint and content root. Exact settled replays return the stored response without a second charge. Conflicts, processing records, and uncertain outcomes fail closed. A successful settlement whose response cannot be durably saved becomes an operator-reconciliation incident. The buyer commits the confirmed receipt, cleared pending gate, bargaining result, and step index together; a failure before that final commit leaves the durable gate in place instead of recording a half-applied step.
 
-- verified source: bundled 24-piece CC0 fixture;
-- minimum recovery-service spend cap: USD 12.01;
-- maximum recovery-service spend cap: USD 5,000.00;
-- provider reward range: USD 1.00 to USD 1,000.00;
-- default recovery spend cap: USD 20.00; and
-- default provider reward: USD 5.00.
+These safeguards are suitable for one controlled testnet run. Production still requires normalized transactional operations, horizontally safe locking, explicit reconciliation/clearance tooling, alerting, backups, and incident procedures.
 
-The service cap and provider bounty are separate commitments. The USD 12.01 reserve covers the USD 12.00 maximum local archive quote plus a one-cent discovery reference. The successful local bargain is USD 9.75, so the default demonstrated service accounting is USD 9.76. Other mission currencies use deterministic reference equivalents.
+## What remains local
 
-Mission creation fails closed for unsupported currencies, rights, content root, piece count, license, budget, or reward. Rain sandbox additionally rejects non-USD missions.
+Even after a confirmed preview transaction:
 
-## Capped x402 testnet prerequisites
+- Atlas merchant bargaining is local;
+- the `$9.75` archive allocation is local unless a separately configured Rain sandbox run is performed;
+- provider discovery metadata is deterministic;
+- the full Monad bounty/collateral/reward lifecycle is local;
+- provider data retrieval uses the bundled fixture;
+- verifier independence is scripted; and
+- two seeders are modeled rather than started.
 
-Before setting `MONAD_EXECUTION_MODE=x402-testnet`:
+Do not say the marketplace or bounty is onchain merely because the discovery payment is.
 
-1. Rotate every credential that has appeared in chat, logs, screenshots, or a commit.
-2. Use a dedicated low-value payer key in an access-controlled local runtime.
-3. Fund the payer with only the required official Monad test USDC. Confirm the submitting seller/facilitator can fund MON gas; do not require MON in the buyer wallet unless that service explicitly does.
-4. Configure a distinct payee wallet; payer and payee must not be the same.
-5. Use a credential-free HTTPS Monad RPC and HTTPS seller resource.
-6. Require the seller to return the exact x402 v2 requirement for `eip155:10143`, pinned official test USDC, configured payee, expected resource, expected price, and required payment identifier.
-7. Enforce durable uniqueness for the payment identifier on the seller and persist paid results. Exact duplicates must return the existing result without a second charge.
-8. Use the implemented durable buyer pending-payment record: it is written before signing/transmission and blocks reset, fresh startup, and repeat authorization. Reconcile and deliberately clear any unknown outcome before proceeding.
-9. Retain the settlement response, transaction hash, confirmation evidence, exact token `Transfer` log, explorer link, and payment ID.
-10. Keep public Vercel in local mode.
+## Required path to production
 
-The current adapter performs fail-closed requirement validation, amount/asset/network/payee/resource checks, payer balance checks, a durable pre-sign pending-payment gate, bounded signing, stable payment identifiers, response limits, confirmation waiting, and independent receipt-log verification. Those controls make the testnet demo bounded; they do not provide an automated operator reconciliation/clearance workflow or normalized production ledger.
-
-## Crash-safety and idempotency boundary
-
-Every external operation must be a resumable saga:
-
-1. durably create a pending operation before signing or sending;
-2. assign a stable idempotency/payment identifier;
-3. persist remote identifiers and receipts immediately;
-4. reconcile before retrying a timeout or ambiguous response;
-5. make seller-side payment identifiers globally unique; and
-6. test process termination after every external mutation.
-
-The local CLI snapshot durably stores the x402 pending-payment gate before signing and restores the fail-closed block after restart. It and the Vercel JSONB demo snapshot are still not normalized external-operation journals, and the public Vercel runtime disables live x402. The Rain sandbox path similarly checkpoints known card/authorization state and blocks destructive replacement while recorded card authority may remain live. Neither path is a complete automated webhook/reconciliation saga.
-
-## Required path to a production release
-
-1. Replace snapshot persistence with normalized transactional missions, operation attempts, idempotency records, receipts, reconciliation state, and append-only audit events.
-2. Add authentication, tenant isolation, RBAC, rate limits, quotas, telemetry redaction, backups, incident response, and managed secret/custody boundaries.
-3. Add signed Rain webhooks with replay protection, transaction reconciliation, refunds/reversals, disputes, and a real freeze/close lifecycle; complete production issuer/compliance onboarding.
-4. Compile, test, fuzz, audit, deploy, and verify `RecoveryBountyRegistry.sol`; implement a separate Monad writer with chain/code checks, simulation, nonce/fee policy, confirmation, replacement, reorg, dispute, and restart reconciliation.
-5. Operate a durable x402 seller/facilitator boundary and buyer reconciliation system; test duplicate, unknown-outcome, outage, wrong-chain/token/payee/amount, expiry, and insufficient-funds cases.
-6. Replace the local Atlas merchant with an authenticated negotiation API whose binding quote is independently signed/verifiable.
-7. Add authenticated provider streaming, signed manifests, isolated recovery workers, malware/content controls, durable artifact storage, independent verifier services, persistent reseeding, and ongoing availability evidence.
-8. Define and obtain approval for the complete multi-currency/FX, fee, refund, custody, disclosure, accounting, and compliance model.
-9. Run capped sandbox/testnet pilots before any mainnet or production-card use.
+1. Add authenticated users, tenant isolation, RBAC, per-tenant budgets, rate limits, quotas, audit signing, monitoring, backups, and incident response.
+2. Replace JSONB snapshots with normalized missions, attempts, idempotency records, receipts, reconciliation state, and append-only audit events.
+3. Complete Rain production onboarding; add signed webhooks, replay handling, remote cancellation, refunds/reversals, disputes, and ledger reconciliation.
+4. Compile, test, fuzz, audit, deploy, and verify the Monad bounty contract; add a separate writer with simulation, nonce/fee policy, confirmations, replacement, reorg, and recovery logic.
+5. Productionize x402 custody, policies, quotas, seller locks, reconciliation, facilitator failover, and mainnet/token review.
+6. Replace Atlas with an authenticated merchant API and independently verifiable binding quotes.
+7. Add authenticated provider streaming, signed manifests, isolated workers, malware/content controls, independent verifier services, durable artifact storage, and real reseeding evidence.
+8. Define the complete FX, fee, refund, custody, disclosure, accounting, tax, and compliance model.
 
 ## Go-live tests
 
-- multi-currency rounding, limit, refund, and reconciliation properties;
-- Solidity unit, invariant, fuzz, fork, malicious-token, deadline, dispute, and replay tests;
-- Monad nonce, fee, confirmation, replacement, and reorg tests;
-- x402 wrong-chain, wrong-token, wrong-payee, overprice, expiry, duplicate, unknown-outcome, seller/facilitator outage, and insufficient-funds tests;
-- Rain sandbox/production contract tests plus signed-webhook replay and reordering tests;
-- merchant identity, signature, replay, expiry, and term-tampering tests;
-- provider corruption, truncation, timeout, partial failure, and reseeding-availability tests;
-- crash/restart tests after every external mutation; and
+- Privy policy-denial and code-level wrong-method/chain/token/payee/amount/lifetime tests;
+- preview-to-production environment isolation and Deployment Protection tests;
+- one-shot state, host/branch, reset, and mission-creation denial tests;
+- buyer and seller payment-ID replay/conflict/unknown-outcome/restart tests;
+- x402 wrong chain, token, payee, amount, resource, expiry, facilitator outage, and insufficient-balance tests;
+- Rain UUID/authentication, sandbox contract, webhook, reversal, and reordering tests;
+- merchant identity/signature/replay/expiry/term tests;
+- multi-currency rounding, refund, and reconciliation properties;
+- Solidity unit, invariant, fuzz, fork, dispute, and replay tests;
+- provider corruption/timeout/partial-failure/reseeding tests; and
 - authentication, tenant-boundary, SSRF, payment-drain, custody, and card-data security reviews.
 
 ## Current protocol references
 
 - [Monad network information](https://docs.monad.xyz/developer-essentials/network-information)
-- [Monad testnet information](https://docs.monad.xyz/developer-essentials/testnet)
 - [Monad x402 guide](https://docs.monad.xyz/guides/x402)
-- [x402 v2 client/server flow](https://docs.cdp.coinbase.com/x402/core-concepts/how-it-works)
-- [x402 facilitator responsibilities](https://docs.cdp.coinbase.com/x402/core-concepts/facilitator)
+- [x402 buyer flow](https://docs.x402.org/getting-started/quickstart-for-buyers)
+- [x402 seller flow](https://docs.x402.org/getting-started/quickstart-for-sellers)
+- [Privy create server wallet API](https://docs.privy.io/api-reference/wallets/create)
 
-Monad mainnet uses chain ID `143`; this project intentionally pins the live x402 adapter to testnet chain ID `10143`. See [Hackathon Acceptance and Currency Model](HACKATHON_ACCEPTANCE_AND_CURRENCY.md) for the concise demo truth table and [API and Testnet Integration Guide](API_INTEGRATION.md) for exact configuration.
+Public Production remains entirely local-only. The protected Preview proves, at most, one bounded test-USDC discovery settlement—not production readiness.

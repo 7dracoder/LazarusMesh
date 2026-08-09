@@ -18,7 +18,11 @@ const { LocalX402Adapter } = require("./src/services/x402-local");
 const { MonadX402Adapter } = require("./src/services/x402-monad");
 const { LocalNegotiationAdapter } = require("./src/services/negotiation-local");
 const { LocalRecoveryAdapter } = require("./src/services/recovery-local");
-const { createDefaultState, createMission } = require("./src/demo-state");
+const {
+  LIVE_PREVIEW_MISSION_LIFETIME_MS,
+  createDefaultState,
+  createMission,
+} = require("./src/demo-state");
 const { LazarusOrchestrator } = require("./src/orchestrator");
 const { potentiallyLiveRainSandboxCard } = require("./src/domain/authority");
 const {
@@ -226,6 +230,9 @@ function createApplication({
   enableEventStream = true,
   runtime = "local",
   persistState = async () => {},
+  x402Seller = null,
+  x402FetchImpl = null,
+  livePreviewOneShot = false,
 } = {}) {
   if (!["local", "rain-sandbox"].includes(adapterMode)) {
     throw new Error(`Unsupported ADAPTER_MODE: ${adapterMode}`);
@@ -233,6 +240,12 @@ function createApplication({
   const configuredMonadExecution = env.MONAD_EXECUTION_MODE || "local";
   if (!["local", "x402-testnet"].includes(configuredMonadExecution)) {
     throw new Error(`Unsupported MONAD_EXECUTION_MODE: ${configuredMonadExecution}`);
+  }
+  if (x402Seller !== null && typeof x402Seller?.handle !== "function") {
+    throw new Error("The x402 seller must expose handle().");
+  }
+  if (x402FetchImpl !== null && typeof x402FetchImpl !== "function") {
+    throw new Error("The x402 fetch implementation must be a function.");
   }
   let store;
   const persistPendingX402Payment = async (pending) => {
@@ -249,12 +262,9 @@ function createApplication({
       error.statusCode = 409;
       throw error;
     }
-    const existing = mission.externalOperations?.x402Pending;
-    if (
-      existing &&
-      (existing.receiptId !== pending.receiptId || existing.paymentId !== pending.paymentId)
-    ) {
-      const error = new Error("Another x402 payment is already awaiting reconciliation.");
+    const unresolved = store.get().missions?.find((item) => item.externalOperations?.x402Pending);
+    if (unresolved) {
+      const error = new Error("An x402 payment is already awaiting reconciliation.");
       error.code = "X402_RECONCILIATION_REQUIRED";
       error.statusCode = 409;
       throw error;
@@ -271,6 +281,7 @@ function createApplication({
   const x402 = adapterOverrides.x402 || (configuredMonadExecution === "x402-testnet"
     ? new MonadX402Adapter({
       ...monadX402Config(env),
+      ...(x402FetchImpl ? { fetchImpl: x402FetchImpl } : {}),
       persistPendingPayment: persistPendingX402Payment,
     })
     : new LocalX402Adapter());
@@ -316,6 +327,7 @@ function createApplication({
       facilitatorConfigured: readiness.facilitatorConfigured,
       resourceConfigured: readiness.resourceConfigured,
       liveSettlementEnabled: x402Live,
+      sellerEnabled: x402Seller !== null,
     },
     negotiation: {
       mode: negotiation.mode || "local-negotiation",
@@ -449,7 +461,10 @@ function createApplication({
     ),
   };
 
-  const stateFactory = () => createDefaultState(recovery, { system });
+  const stateFactory = () => createDefaultState(recovery, {
+    system,
+    ...(livePreviewOneShot ? { missionLifetimeMs: LIVE_PREVIEW_MISSION_LIFETIME_MS } : {}),
+  });
   store = providedStore || new JsonStore(dataFile, stateFactory);
   const previousState = store.get();
   const unresolvedAuthority = previousState.missions?.find((mission) => (
@@ -498,6 +513,7 @@ function createApplication({
   });
 
   async function routeApi(request, response, url) {
+    if (x402Seller && await x402Seller.handle(request, response, url)) return;
     if (request.method === "POST") assertSameOriginMutation(request, { requireOrigin: allowRemoteHost });
     if (request.method === "GET" && url.pathname === "/api/health") {
       let rainHealth = { ok: true, mode: rain.mode || "local", authenticated: false };
@@ -537,6 +553,7 @@ function createApplication({
           x402: {
             execution: system.x402.mode,
             liveSettlementEnabled: x402Live,
+            sellerEnabled: system.x402.sellerEnabled,
             resourceConfigured: readiness.resourceConfigured,
             facilitatorConfigured: readiness.facilitatorConfigured,
           },
@@ -570,11 +587,23 @@ function createApplication({
     }
 
     if (request.method === "POST" && url.pathname === "/api/demo/reset") {
+      if (livePreviewOneShot) {
+        return sendApiProblem(response, 403, {
+          code: "LIVE_PREVIEW_ONE_SHOT",
+          message: "The protected payment preview is one-shot; reset is disabled.",
+        });
+      }
       const state = await orchestrator.reset(stateFactory);
       return sendJson(response, 200, state);
     }
 
     if (request.method === "POST" && url.pathname === "/api/missions") {
+      if (livePreviewOneShot) {
+        return sendApiProblem(response, 403, {
+          code: "LIVE_PREVIEW_ONE_SHOT",
+          message: "The protected payment preview uses one fixed, verified mission.",
+        });
+      }
       const body = await readJson(request);
       if (!body || typeof body !== "object" || Array.isArray(body)) {
         return sendApiProblem(response, 400, {
@@ -812,7 +841,8 @@ function createApplication({
     store,
     stateFactory,
     system,
-    adapters: { rain, monad, x402, negotiation, recovery },
+    adapters: { rain, monad, x402, negotiation, recovery, x402Seller },
+    internal: Object.freeze({ persistPendingX402Payment }),
   };
 }
 

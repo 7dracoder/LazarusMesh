@@ -5,6 +5,14 @@ const { MemoryStore } = require("../src/store");
 const { NeonStateStore, StateConflictError } = require("../src/neon-state");
 const { rehydrateLocalAdapters } = require("../src/rehydrate-local");
 const { migrateStateForRuntime } = require("../src/state-migrations");
+const { createInternalX402SellerFetch } = require("../src/services/x402-internal-fetch");
+const { MonadX402Seller } = require("../src/services/x402-seller");
+const { NeonX402SettlementStore } = require("../src/services/x402-seller-store");
+const {
+  assertLivePreviewRequest,
+  assertLivePreviewState,
+  vercelRuntimePolicy,
+} = require("../src/vercel-policy");
 
 function restoreRewrittenApiUrl(request) {
   const host = typeof request.headers?.host === "string" ? request.headers.host : "localhost";
@@ -62,16 +70,38 @@ function createBufferedResponse(response) {
 }
 
 function createRuntime() {
-  const adapterMode = process.env.ADAPTER_MODE || "local";
-  if (adapterMode !== "local") {
-    throw new Error("The public Vercel demo supports ADAPTER_MODE=local only. Run Rain sandbox locally until authenticated tenancy, quotas, and durable external-operation reconciliation are installed.");
-  }
-  if ((process.env.MONAD_EXECUTION_MODE || "local") !== "local") {
-    throw new Error("The public Vercel demo keeps Monad execution local. Run capped x402 testnet payments only from an access-controlled runtime with durable seller idempotency.");
-  }
+  const deploymentPolicy = vercelRuntimePolicy(process.env);
+  const adapterMode = deploymentPolicy.adapterMode;
+  const protectedSellerHost = process.env.VERCEL_BRANCH_URL || process.env.VERCEL_URL;
+  const availabilityBaseUrl = deploymentPolicy.liveBuyerEnabled
+    ? `https://${protectedSellerHost}/api/x402/availability/`
+    : process.env.X402_AVAILABILITY_BASE_URL;
+  const runtimeEnv = {
+    ...process.env,
+    ...(availabilityBaseUrl ? { X402_AVAILABILITY_BASE_URL: availabilityBaseUrl } : {}),
+    ...(deploymentPolicy.liveBuyerEnabled
+      ? { X402_PAYMENT_NAMESPACE: deploymentPolicy.stateKey }
+      : {}),
+  };
 
   const store = new MemoryStore(() => ({ missions: [] }));
-  const persistence = new NeonStateStore({ connectionString: process.env.DATABASE_URL });
+  const persistence = new NeonStateStore({
+    connectionString: process.env.DATABASE_URL,
+    key: deploymentPolicy.stateKey,
+  });
+  const x402Seller = deploymentPolicy.sellerEnabled
+    ? new MonadX402Seller({
+      availabilityBaseUrl,
+      payToAddress: runtimeEnv.MONAD_PAY_TO_ADDRESS,
+      facilitatorUrl: runtimeEnv.X402_FACILITATOR_URL,
+      amountAtomic: runtimeEnv.X402_EXPECTED_AMOUNT_ATOMIC || "10000",
+      maxTimeoutSeconds: Number(runtimeEnv.X402_MAX_AUTHORIZATION_SECONDS || 300),
+      settlementStore: new NeonX402SettlementStore({ connectionString: process.env.DATABASE_URL }),
+    })
+    : null;
+  const x402FetchImpl = deploymentPolicy.liveBuyerEnabled
+    ? createInternalX402SellerFetch({ seller: x402Seller, availabilityBaseUrl })
+    : null;
   let revision = null;
   let persistedSnapshot = null;
   const saveIfChanged = async (state) => {
@@ -84,16 +114,20 @@ function createRuntime() {
   };
   const application = createApplication({
     adapterMode,
-    env: process.env,
+    env: runtimeEnv,
     store,
     resetStateOnStart: false,
     allowRemoteHost: true,
     enableEventStream: false,
     runtime: "vercel",
     persistState: saveIfChanged,
+    x402Seller,
+    x402FetchImpl,
+    livePreviewOneShot: deploymentPolicy.livePreviewOneShot,
   });
   return {
     ...application,
+    deploymentPolicy,
     persistence,
     initializePersistence(snapshot) {
       revision = snapshot.revision;
@@ -125,9 +159,11 @@ module.exports = async function handler(request, response) {
     // polling GET alongside a long POST in one warm process; sharing a runtime
     // would let the GET replace the POST's in-flight state.
     const app = createRuntime();
+    assertLivePreviewRequest(request, app.deploymentPolicy);
     const snapshot = await app.persistence.load(app.stateFactory);
     app.initializePersistence(snapshot);
     migrateStateForRuntime(snapshot.state, app.system);
+    assertLivePreviewState(snapshot.state, app.deploymentPolicy);
     app.store.replace(snapshot.state);
     await rehydrateLocalAdapters(app.store.get(), app.adapters);
 
