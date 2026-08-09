@@ -446,9 +446,21 @@ function createApplication({
       stateStore: providedStore ? "managed-postgres" : "local-json",
       eventTransport: enableEventStream ? "sse" : "polling",
       publicDemo: allowRemoteHost,
+      livePreviewOneShot,
+      resetEnabled: !livePreviewOneShot,
     },
     missionCreation: {
       ...MISSION_CREATION_POLICY,
+<<<<<<< Updated upstream
+=======
+      ...(livePreviewOneShot
+        ? {
+            available: false,
+            enabled: false,
+            unavailableReason: "This protected one-shot Preview uses its preloaded mission; new mission creation is disabled.",
+          }
+        : {}),
+>>>>>>> Stashed changes
       sourceMode: networkedProviders ? "sponsor-pinned-remote-provider-manifest" : MISSION_CREATION_POLICY.sourceMode,
       currencyRateSet: RATE_SET_ID,
       supportedCurrencies,
@@ -482,11 +494,13 @@ function createApplication({
       total: 3,
     },
     financialExecution: {
-      mode: x402Live
-        ? "monad-testnet-x402-plus-local-simulation"
-        : adapterMode === "rain-sandbox"
-          ? "rain-external-sandbox-simulation"
-          : "local-simulation",
+      mode: x402Live && adapterMode === "rain-sandbox"
+        ? "rain-external-sandbox-plus-monad-testnet-x402"
+        : x402Live
+          ? "monad-testnet-x402-plus-local-card-simulation"
+          : adapterMode === "rain-sandbox"
+            ? "rain-external-sandbox-plus-local-x402"
+            : "local-simulation",
       realFunds: false,
       testnetTokensCanMove: x402Live,
       chainWrites: x402Live,

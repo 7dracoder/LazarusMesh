@@ -185,3 +185,67 @@ test("an unsupported adapter mode still fails closed on Vercel", () => {
     LAZARUS_STATE_KEY: "merchant-rain-live-v1",
   }), /exactly local or rain-sandbox/i);
 });
+<<<<<<< Updated upstream
+=======
+
+test("the protected preview accepts a dedicated raw payer key instead of Privy", () => {
+  const rawKeyEnv = liveEnv({
+    PRIVY_APP_ID: "",
+    PRIVY_APP_SECRET: "",
+    PRIVY_PAYER_WALLET_ID: "",
+    PRIVY_PAYER_ADDRESS: "",
+    MONAD_PRIVATE_KEY: `0x${"11".repeat(32)}`,
+  });
+  const policy = vercelRuntimePolicy(rawKeyEnv);
+  assert.equal(policy.liveBuyerEnabled, true);
+  assert.equal(policy.signerKind, "raw-private-key");
+
+  // A complete Privy payer still works and is still reported distinctly.
+  assert.equal(vercelRuntimePolicy(liveEnv()).signerKind, "privy-server-wallet");
+});
+
+test("the protected preview rejects a missing, malformed, or ambiguous signer", () => {
+  const noPrivy = {
+    PRIVY_APP_ID: "",
+    PRIVY_APP_SECRET: "",
+    PRIVY_PAYER_WALLET_ID: "",
+    PRIVY_PAYER_ADDRESS: "",
+  };
+  // No signer at all.
+  assert.throws(
+    () => vercelRuntimePolicy(liveEnv(noPrivy)),
+    /needs one payer signer/i,
+  );
+  // A raw key that is not a 32-byte hex value.
+  for (const badKey of ["not-a-key", "0x1234", `0x${"11".repeat(31)}`, `0x${"zz".repeat(32)}`]) {
+    assert.throws(
+      () => vercelRuntimePolicy(liveEnv({ ...noPrivy, MONAD_PRIVATE_KEY: badKey })),
+      /32-byte hexadecimal private key/i,
+    );
+  }
+  // Both signers configured leaves the active one ambiguous.
+  assert.throws(
+    () => vercelRuntimePolicy(liveEnv({ MONAD_PRIVATE_KEY: `0x${"11".repeat(32)}` })),
+    /never both/i,
+  );
+});
+
+test("a raw payer key never enables live execution outside a protected preview", () => {
+  const productionish = {
+    ADAPTER_MODE: "local",
+    MONAD_EXECUTION_MODE: "x402-testnet",
+    MONAD_PRIVATE_KEY: `0x${"11".repeat(32)}`,
+    ALLOW_EXTERNAL_WRITES_ON_VERCEL: "true",
+    X402_SELLER_ENABLED: "true",
+    LAZARUS_STATE_KEY: "preview-x402-v1",
+    VERCEL: "1",
+  };
+  for (const overrides of [
+    { VERCEL_ENV: "production", VERCEL_TARGET_ENV: "production" },
+    { VERCEL_ENV: "development", VERCEL_TARGET_ENV: "development" },
+    { VERCEL_ENV: "preview", VERCEL_TARGET_ENV: "production" },
+  ]) {
+    assert.throws(() => vercelRuntimePolicy({ ...productionish, ...overrides }));
+  }
+});
+>>>>>>> Stashed changes
