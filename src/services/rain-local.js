@@ -17,6 +17,7 @@ class RainPolicyError extends Error {
 class LocalRainAdapter {
   constructor({ clock = () => new Date() } = {}) {
     this.clock = clock;
+    this.mode = "local";
     this.cards = new Map();
   }
 

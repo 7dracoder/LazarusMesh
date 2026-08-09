@@ -46,13 +46,13 @@ The result saves `$2.25`, or `18.75%`, from the initial ask. A Rain card is crea
 | Provider collateral requirement | `$2.00` | Tracked separately in the local Monad ledger |
 | Default mission budget | `$20.00` | Budget ceiling |
 
-Successful mission spend is exactly `$9.76`: one cent for discovery plus `$9.75` for the archive purchase. The `$5.00` bounty is released cumulatively at 70%, 90%, and 100%, corresponding to `$3.50`, then `$1.00`, then `$0.50` incremental releases.
+Successful mission policy usage is exactly `$9.76`: one cent for discovery plus `$9.75` for the archive allocation. In local and deployed demo mode this is simulated accounting—`$0.00` is charged. With the minimum `$12.01` service cap, the UI therefore shows `$2.25` as **demo reserve remaining**. The Deal tab separately shows the same `$2.25` as **negotiated savings** from the `$12.00` ask; neither number means payment failed. The `$5.00` bounty is advanced locally at 70%, 90%, and 100%, corresponding to `$3.50`, then `$1.00`, then `$0.50` incremental demo-ledger entries.
 
 In `rain-sandbox` mode, the adapter also simulates `$20.00` of rUSD collateral funding by default before its first card issuance. That is Rain sandbox setup, not mission spend, and no real funds move. Set `RAIN_AUTO_FUND_MINOR=0` only when the provisioned Rain contract already has enough sandbox collateral.
 
 ## Deploy to Vercel with free Postgres
 
-The repository now includes a Vercel serverless API (`api/[...path].js`) and a free Neon Postgres integration. The deployment stores the complete demo audit snapshot in Postgres instead of `.data/state.json`, reloads it before each API request, and rebuilds the deterministic local adapter ledgers before a mission continues. The browser uses five-second polling on Vercel because long-lived SSE connections are not a reliable serverless transport.
+The repository now includes a Vercel serverless API (`api/index.js`) and a free Neon Postgres integration. A Vercel rewrite sends every nested `/api/*` route to that function while preserving the route for the Node request handler. The deployment stores the complete demo audit snapshot in Postgres instead of `.data/state.json`, reloads it before each API request, and rebuilds the deterministic local adapter ledgers before a mission continues. The browser uses five-second polling on Vercel because long-lived SSE connections are not a reliable serverless transport.
 
 Deploy it from the repository root after accepting the Neon marketplace terms and connecting the integration in Vercel:
 
@@ -67,9 +67,10 @@ This is a durable public **demo** deployment, not a live payment service. It run
 
 ## Run locally
 
-Requires Node.js 20 or later. There are no runtime package dependencies and no `npm install` step.
+Requires Node.js 20 or later.
 
 ```sh
+npm install
 node server.js
 ```
 
@@ -199,7 +200,7 @@ The browser uses plain HTML, CSS, and JavaScript. The server uses Node built-ins
 
 ```text
 server.js                              HTTP, REST, SSE/polling selection, adapter selection, health
-api/[...path].js                       Vercel serverless API + durable request wrapper
+api/index.js                           Vercel serverless API + durable request wrapper
 src/neon-state.js                      Neon Postgres JSONB state/revision repository
 src/rehydrate-local.js                 Rebuilds local demo adapter state per serverless request
 src/config.js                          .env loading and safe configuration mapping

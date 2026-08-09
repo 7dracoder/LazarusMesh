@@ -257,6 +257,12 @@ function createApplication({
       online: adapterMode === "rain-sandbox" ? 1 : 0,
       total: 3,
     },
+    financialExecution: {
+      mode: adapterMode === "rain-sandbox" ? "rain-external-sandbox-simulation" : "local-simulation",
+      realFunds: false,
+      livePaymentsEnabled: false,
+      externalPaymentRequests: adapterMode === "rain-sandbox",
+    },
     verifiers: { status: "local quorum" },
     networkAccess: adapterMode === "rain-sandbox" || (
       readiness.rpcConfigured && readiness.facilitatorConfigured

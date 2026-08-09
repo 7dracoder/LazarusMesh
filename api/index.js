@@ -5,7 +5,25 @@ const { MemoryStore } = require("../src/store");
 const { NeonStateStore, StateConflictError } = require("../src/neon-state");
 const { rehydrateLocalAdapters } = require("../src/rehydrate-local");
 
-let runtime;
+function restoreRewrittenApiUrl(request) {
+  const host = typeof request.headers?.host === "string" ? request.headers.host : "localhost";
+  const url = new URL(request.url || "/", `https://${host}`);
+  const routedPath = url.searchParams.get("__lazarus_path");
+  if (routedPath === null) return;
+
+  const segments = routedPath.replace(/^\/+|\/+$/g, "").split("/");
+  if (!segments.length || segments.some((segment) => !/^[A-Za-z0-9_-]+$/.test(segment))) {
+    const error = new Error("The deployment received an invalid API route.");
+    error.code = "INVALID_DEPLOYMENT_ROUTE";
+    error.statusCode = 400;
+    throw error;
+  }
+
+  url.searchParams.delete("__lazarus_path");
+  url.searchParams.delete("path");
+  const query = url.searchParams.toString();
+  request.url = `/api/${segments.join("/")}${query ? `?${query}` : ""}`;
+}
 
 function createBufferedResponse(response) {
   const headers = new Map();
@@ -42,8 +60,7 @@ function createBufferedResponse(response) {
   };
 }
 
-function getRuntime() {
-  if (runtime) return runtime;
+function createRuntime() {
   const adapterMode = process.env.ADAPTER_MODE || "local";
   if (adapterMode !== "local") {
     throw new Error("The Vercel deployment supports only ADAPTER_MODE=local. Do not enable Rain sandbox credentials until its external-operation saga is durable.");
@@ -59,11 +76,10 @@ function getRuntime() {
     enableEventStream: false,
     runtime: "vercel",
   });
-  runtime = {
+  return {
     ...application,
     persistence: new NeonStateStore({ connectionString: process.env.DATABASE_URL }),
   };
-  return runtime;
 }
 
 function sendDeploymentProblem(response, error) {
@@ -83,7 +99,11 @@ function sendDeploymentProblem(response, error) {
 
 module.exports = async function handler(request, response) {
   try {
-    const app = getRuntime();
+    restoreRewrittenApiUrl(request);
+    // Keep mutable adapters and mission state request-local. Vercel can run a
+    // polling GET alongside a long POST in one warm process; sharing a runtime
+    // would let the GET replace the POST's in-flight state.
+    const app = createRuntime();
     const snapshot = await app.persistence.load(app.stateFactory);
     app.store.replace(snapshot.state);
     await rehydrateLocalAdapters(app.store.get(), app.adapters);

@@ -53,6 +53,8 @@ test("full local recovery finishes with verified data, payments, and retired aut
     ));
     assert.ok(mission.payments.some((payment) => payment.network === "eip155:10143"));
     assert.ok(mission.transactions.some((transaction) => transaction.operation === "releaseReward"));
+    assert.ok(mission.events.some((event) => event.title === "Archive purchase simulated" && /\$0\.00 was charged/.test(event.description)));
+    assert.ok(mission.events.some((event) => event.title === "Policy safety test passed" && /No funds moved/.test(event.description)));
   });
 });
 
@@ -190,6 +192,9 @@ test("state publishes mission limits and truthful integration capabilities", asy
     assert.equal(state.system.missionCreation.contentRoot, state.missions[0].contentRoot);
     assert.equal(state.system.monad.writesEnabled, false);
     assert.equal(state.system.x402.liveSettlementEnabled, false);
+    assert.equal(state.system.financialExecution.mode, "local-simulation");
+    assert.equal(state.system.financialExecution.realFunds, false);
+    assert.equal(state.system.financialExecution.livePaymentsEnabled, false);
     assert.equal(state.system.productionReady, false);
   });
 });
