@@ -11,17 +11,19 @@ Lazarus Mesh has three deliberately different surfaces:
 
 | Surface | Buyer behavior | Seller behavior | Financial boundary |
 | --- | --- | --- | --- |
-| Public production | Local x402-shaped simulation | Disabled | Entirely local-only: no payer signer, paid seller route, facilitator settlement, or chain write. |
+| Public production | Local x402-shaped simulation plus optional authenticated merchant calls | Remote merchant/provider at `https://lazarus-merchant.vercel.app` or local Atlas fallback | Merchant HTTPS traffic may be real; payment, bounty, verifier, reseeding, and chain execution remain local with `$0.00` charged. |
 | Protected branch preview | One fixed mission may use the Privy payer server wallet once | Durable x402 seller is enabled behind the same deployment protection | One capped test-USDC discovery payment; reset and arbitrary mission creation are disabled. |
 | Local Node runtime | Local by default; optional raw-key or Privy testnet buyer | Seller is optional | Developer-controlled integration surface; never expose it directly to the internet. |
 
-Neon and Vercel are real infrastructure. Only the protected preview's x402 buyer/seller/facilitator path can be a real Monad testnet action. Merchant bargaining, the archive purchase, the recovery bounty, provider fulfillment, verifier independence, and reseeding are still deterministic local models.
+Neon and Vercel are real infrastructure. Remote merchant bargaining, quote signing, manifest retrieval, and provider piece delivery are real HTTPS operations. Only the separate protected preview's x402 buyer/seller/facilitator path can be a Monad testnet action, and that safety profile uses the pinned local fixture rather than remote merchant mode. The archive spend, recovery bounty, verifier independence, and reseeding remain local models in the remote-merchant deployment.
 
 | Displayed actor | Runtime identity | What it really is | External connection |
 | --- | --- | --- | --- |
 | Lazarus buyer policy | Buyer orchestrator | Deterministic recovery and bargaining workflow | Calls only configured adapters; it is not an LLM chat agent. |
-| Atlas Archive Cloud | Archive merchant | Simulated seller with a reference ask and floor | No merchant API, checkout, or human merchant is contacted. |
-| Atlas Archive Node | Recovery provider | Simulated provider backed by the bundled CC0 fixture | No provider network is contacted. |
+| Lazarus Recovery Merchant | Remote archive merchant | Independently deployed structured merchant API with an operator-configured ask/floor | Authenticated HTTPS sessions and Ed25519-signed binding quotes. |
+| Lazarus Recovery Merchant provider | Remote recovery provider | Serves the eight-piece CC0 artifact described by the sponsor-pinned manifest | Authenticated HTTPS manifest and piece retrieval. It does not persist replicas after delivery. |
+| Merchant operator console | Merchant-facing UI | Shows settings, sessions, counters, signed deals, and audit events | The offer carries proposed bounty context, but the service does not persist it; the console has no bounty, claim, wallet, or payout display. |
+| Atlas Archive Cloud / Node | Local fallback merchant/provider | Simulated seller and bundled 24-piece fixture | Used only when `MERCHANT_MODE=local`. |
 | North / East / West Verifier | Verification quorum | Scripted local roles | No independent verifier service is contacted. |
 | Privy payer server wallet | x402 payer | Dedicated low-value EVM signer held behind Privy's server API | Used only by the armed, protected preview or an access-controlled local run. |
 | Receive-only payee | x402 recipient | Distinct public EVM address | Receives test USDC; Lazarus does not need or store its private key to receive. |
@@ -34,11 +36,19 @@ Negative-control merchant names in the UI exist only to demonstrate policy denia
 
 ## What communicates today
 
-Public production is fully local-only:
+The verified remote merchant/provider path is:
 
 ```text
-Browser -> Lazarus mission API -> local x402 simulation
+Browser -> Lazarus mission API
+  -> authenticated HTTPS offer/counter requests
+  -> Lazarus Recovery Merchant
+  -> Ed25519-signed $9.75 USD quote verified against a pinned key
+  -> authenticated manifest/piece requests
+  -> 8/8 piece hashes + reconstructed artifact/root verified
+  -> local-only bounty, card allocation, verifier, and reseeding records
 ```
+
+An end-to-end acceptance run completed that flow in two bargaining rounds. It charged `$0.00` and made no chain write. The sponsor pins the complete eight-piece manifest in Lazarus configuration; the provider's live manifest must exactly match before any piece is accepted. The merchant cannot redefine the trusted root at runtime.
 
 The protected branch preview co-locates exactly one outgoing buyer path and its durable seller:
 
@@ -56,7 +66,7 @@ The buyer uses the internal same-origin seller transport so it does not bypass o
 
 The buyer authorization is gasless; the facilitator or other settlement submitter needs testnet MON for gas. The payer needs only the capped amount of the pinned Monad test USDC unless that facilitator explicitly requires otherwise.
 
-This path does not add merchant chat, A2A negotiation, website automation, archive checkout, provider download, independent verification, or seeding. Atlas bargaining and the `$9.75` reference archive allocation remain local even when the one-cent-reference x402 discovery payment settles onchain.
+The x402 Preview path does not add remote merchant bargaining, archive checkout, provider download, independent verification, or seeding. It remains separate from the remote merchant/provider profile. Conversely, the remote merchant profile performs real bargaining and provider download but does not move testnet value.
 
 ## Wallet security boundary
 
@@ -80,7 +90,7 @@ The Rain adapter is implemented, but the current deployment must keep `ADAPTER_M
 
 ## Execution and currency boundary
 
-Mission accounting supports USD, EUR, GBP, CAD, and AUD using fixed demo references, not live exchange rates. These values control display, budgets, bargaining, savings, and local reward accounting.
+Core local mission accounting supports USD, EUR, GBP, CAD, and AUD using fixed demo references, not live exchange rates. A remote merchant deployment accepts one configured accounting currency at a time. The current deployment is USD-only; changing currency requires coordinated configuration on both services.
 
 Settlement is separate:
 
@@ -91,21 +101,30 @@ Settlement is separate:
 
 Selecting EUR, GBP, CAD, or AUD does not create a token or card payment in that currency.
 
-## What real bargaining would require
+## Remote bargaining contract
 
-The current bargaining transcript is an in-process deterministic state machine. A real merchant integration needs authenticated structured operations such as `request_quote`, `counter_offer`, `accept_quote`, and `cancel_quote`.
+Remote mode now implements authenticated structured offer, counteroffer, session, quote, manifest, and piece operations. Lazarus pins the merchant's Ed25519 public-key fingerprint, recomputes the canonical quote digest, verifies the signature, and then applies its independent quote and payment policies.
 
-The merchant's binding response must commit to merchant identity, endpoint/payee, content root or SKU, purpose, price, currency, terms, expiry, nonce, session, and idempotency key. It must be authenticated or signed by the merchant. Free-form model output must never directly authorize payment.
+The binding response commits to merchant/provider identity, MCC, content root, purpose, price, currency, terms, issue time, expiry, and session. The signature includes a unique nonce. Free-form transcript text remains presentation only and never authorizes payment.
 
-To connect external agents, provide:
+Remote Lazarus configuration uses these environment-variable names, with values kept in encrypted server-side configuration:
 
-1. merchant-agent HTTPS or A2A endpoint and authentication method;
-2. merchant signing/public key and quote schema;
-3. provider endpoint for signed manifests and authenticated piece streaming;
-4. at least two independent verifier endpoints and signing keys; and
-5. fulfillment, refund, supported-currency, payee, and MCC rules.
+```text
+MERCHANT_MODE
+MERCHANT_BASE_URL
+MERCHANT_API_TOKEN
+MERCHANT_EXPECTED_KEY_ID
+MERCHANT_CURRENCY
+MERCHANT_TRUSTED_MANIFEST_JSON
+MERCHANT_TIMEOUT_MS
+MERCHANT_RESPONSE_LIMIT_BYTES
+MERCHANT_MAXIMUM_PIECE_BYTES
+MERCHANT_MAXIMUM_TOTAL_BYTES
+```
 
-The live adapter must add HTTPS allowlists, bounded timeouts and bodies, durable idempotency, replay protection, signature verification, and an operation journal. Failure must stop the mission; it must never silently substitute a simulated success.
+The adapter enforces HTTPS except on loopback, bounded timeouts and bodies, exact identities/currency/root, a sponsor-pinned manifest, quote expiry, and signature verification. Failure stops the mission; it never silently substitutes a simulated success.
+
+The merchant receives the `$5.00` proposed bounty only as non-settling context in the initial offer request; its current API does not persist or expose that field. The `$2.00` collateral reference, provider claim, 70/90/100 releases, and all associated receipts live only in Lazarus's local demo ledger. Adding a merchant bounty view requires an explicit authenticated, idempotent bounty-status API and a clear distinction between the `$9.75` archive sale and the provider reward.
 
 ## Production-money boundary
 

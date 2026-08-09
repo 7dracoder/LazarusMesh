@@ -1,47 +1,47 @@
 # Lazarus Mesh — Complete Project Guide
 
-This document describes the code currently in the repository. It distinguishes mission accounting, local simulation, real local cryptographic work, the currently unarmed Rain sandbox adapter, public local-only Production, and the Privy-backed one-shot Monad testnet Preview so demo claims remain accurate.
+This document describes the code currently in the repository. It distinguishes mission accounting, the authenticated remote merchant/provider, local simulation, real cryptographic work, the currently unarmed Rain sandbox adapter, financially local Production, and the Privy-backed one-shot Monad testnet Preview so demo claims remain accurate.
 
 No secret, API-key, private-key, user-ID, team-ID, contract-ID, or card-data value belongs in this guide. Configuration is documented by environment-variable name only.
 
 ## 1. What the project is
 
-Lazarus Mesh is a local-first demonstration of an autonomous recovery marketplace for legally authorized but unavailable digital artifacts. The default mission starts with a bundled CC0 rainfall dataset at zero seeders and demonstrates an agent that can:
+Lazarus Mesh is a local-first demonstration of an autonomous recovery marketplace for legally authorized but unavailable digital artifacts. It can use either the bundled local fixture or the independently deployed merchant/provider at [https://lazarus-merchant.vercel.app](https://lazarus-merchant.vercel.app). The mission starts at zero seeders and demonstrates an agent that can:
 
 1. buy availability intelligence through either an x402-shaped local simulation or an opt-in bounded Monad testnet x402 payment;
 2. bargain with a merchant inside a deterministic policy envelope;
 3. record and claim a demo recovery bounty in a local Monad-style ledger;
 4. create narrowly scoped payment authority through either a local Rain adapter or the external Rain sandbox;
 5. block unrelated spending and authorize only the accepted quote;
-6. recover and hash-check 24 real local data pieces;
+6. recover and hash-check 24 bundled pieces or eight authenticated remote-provider pieces;
 7. reconstruct the original artifact and verify its SHA-256 commitment;
 8. require a two-verifier quorum before reward release; and
 9. restore two simulated seeders and retire payment authority.
 
 The product thesis is **pay for verified recovery, not promises**. The agent can propose actions and counteroffers, but deterministic quote and payment policies decide whether money-like authority may be created or used.
 
-Mission accounting can be selected in USD, EUR, GBP, CAD, or AUD using deterministic fixed reference values. This is not live foreign exchange or a claim that every external rail accepts every selected currency.
+Core local mission accounting can be selected in USD, EUR, GBP, CAD, or AUD using deterministic fixed reference values. The remote merchant accepts one configured currency at a time and is currently USD. This is not live foreign exchange or a claim that every external rail accepts every selected currency.
 
 This is not a general torrent search engine, an unrestricted purchasing agent, a production card application, a wallet, an FX service, or a system for recovering unauthorized, copyrighted, private, malicious, or access-controlled material.
 
 ## 2. What is real, remote, and simulated
 
-The implementation has two independent selectors. `ADAPTER_MODE` chooses local Rain or Rain sandbox. `MONAD_EXECUTION_MODE` chooses the x402-shaped local discovery adapter or the real capped Monad testnet x402 buyer. Deployment policy further constrains which combinations may run on Vercel.
+The implementation has three independent selectors. `ADAPTER_MODE` chooses local Rain or Rain sandbox. `MONAD_EXECUTION_MODE` chooses the x402-shaped local discovery adapter or the real capped Monad testnet x402 buyer. `MERCHANT_MODE` chooses the local Atlas fixture or authenticated remote merchant/provider. Deployment policy further constrains which combinations may run on Vercel.
 
 | Capability | Local selection | External selection | Truthful status |
 | --- | --- | --- | --- |
 | Rain card/payment control | `ADAPTER_MODE=local` | `ADAPTER_MODE=rain-sandbox` makes authenticated Rain sandbox calls | Remote mode is still sandbox simulation, USD-only, and never a production card purchase |
-| Merchant bargaining | Deterministic local Atlas merchant | No external implementation | Structured local bargaining; no live merchant, chat, or merchant-signed quote |
+| Merchant bargaining | Deterministic local Atlas merchant | Authenticated HTTPS merchant API | Remote binding quotes are Ed25519-signed and verified against a sponsor-pinned key |
 | x402 discovery payment | `MONAD_EXECUTION_MODE=local` is x402-shaped simulation | `MONAD_EXECUTION_MODE=x402-testnet` signs and verifies a capped official test-USDC transfer | Public Production is local; testnet is restricted to a protected one-shot Preview or access-controlled local run |
 | x402 availability seller | Disabled | Protected seller with facilitator settlement and Neon replay state | Co-located with the live Preview; disabled in public Production |
 | Payer/payee wallets | None | Privy server-wallet payer plus distinct receive-only payee | Vercel stores no raw payer key and needs no payee secret |
 | Monad bounty lifecycle | In-memory local bounty ledger | No external implementation | Bounty receipt hashes are synthetic in every mode; the registry is not deployed/called |
 | Monad/x402 network readiness | Optional read-only health probe | Same probe | Real reads when both origins are configured; probe success does not authorize payment |
-| Artifact recovery | Reads bundled fixture bytes, splits, hashes, verifies, and reconstructs them | No external implementation | Real local bytes and real SHA-256/Merkle calculations; no peer-to-peer retrieval |
+| Artifact recovery | Reads and verifies a bundled 24-piece fixture | Authenticated eight-piece provider with sponsor-pinned manifest | Remote transfer and SHA-256/Merkle verification are real; persistent storage/reseeding are not |
 | Verifier quorum | Scripted local identities | No external implementation | Simulated verifier independence |
 | Reseeding | Mission state changes to two seeders | No external implementation | Simulated availability; no BitTorrent/IPFS seeding process starts |
 | Local persistence | JSON audit snapshot plus in-memory adapter ledgers | Same | Local CLI persistence is not a durable external-operation journal |
-| Vercel persistence | Free Neon Postgres JSONB snapshot | Preview also stores x402 settlement/replay records | Public Production is local-only; Preview uses isolated state and durable payment IDs |
+| Vercel persistence | Free Neon Postgres JSONB snapshot | Preview also stores x402 settlement/replay records | Production may call the remote merchant while keeping financial state local; Preview uses isolated state and durable payment IDs |
 | Solidity contract | Reference source only | No writer adapter | Not compiled, deployed, called, or audited by this application |
 
 The most important runtime boundary is:
@@ -51,8 +51,9 @@ Rain sandbox code can make authenticated sandbox calls and accepts USD missions 
 but the current values are blocked pending a rotated key and valid provider-issued UUID.
 The protected Monad x402 Preview can move capped official test USDC. Its Privy-backed
 buyer authorization is gasless; the submitting seller/facilitator uses MON for gas.
-Bargaining, the full Monad bounty, recovery, verifier logic, and reseeding remain local.
-Public Vercel Production remains entirely local-only.
+The remote profile makes bargaining and provider retrieval real HTTPS operations.
+The full Monad bounty, archive spend, verifier logic, and reseeding remain local.
+Public Vercel Production performs no live payment or chain write.
 ```
 
 ## 3. Architecture and trust boundaries
@@ -63,7 +64,8 @@ flowchart TD
     HTTP --> ORCH["Nine-step mission orchestrator"]
     ORCH --> QP["Binding-quote policy"]
     ORCH --> PP["General payment policy"]
-    ORCH --> NEG["Local deterministic merchant bargaining"]
+    ORCH --> NEG["Local bargaining or authenticated remote merchant"]
+    NEG --> REMOTE["Ed25519-signed quote API"]
     ORCH --> X402["x402-shaped local simulation"]
     ORCH --> X402LIVE["Optional Monad testnet x402 buyer"]
     X402LIVE --> PRIVY["Restricted Privy payer server wallet"]
@@ -71,7 +73,7 @@ flowchart TD
     X402SELLER --> PAYEE["Distinct receive-only payee"]
     X402SELLER --> SETTLESTORE["Neon payment-ID settlement store"]
     ORCH --> MONAD["Local Monad-style bounty ledger"]
-    ORCH --> REC["Local recovery engine using real fixture bytes"]
+    ORCH --> REC["Local fixture or pinned remote provider"]
     ORCH --> RAINLOCAL["Local Rain adapter"]
     ORCH --> RAINSANDBOX["Optional external Rain sandbox adapter"]
     ORCH --> STORE["Local JSON or Vercel Neon audit snapshot"]
@@ -90,9 +92,9 @@ flowchart TD
 | Monad adapters | `LocalMonadAdapter` always models the bounty. `MonadX402Adapter` can independently pay only for discovery on testnet. |
 | Privy signer | Accepts only the pinned EIP-3009 typed-data envelope and verifies the returned signature. Privy policy is an additional custody control. |
 | x402 seller | Requires payment IDs, durably binds them to payment/resource fingerprints, settles through the facilitator, and replays exact successes without charging twice. |
-| Vercel policy | Keeps Production local-only and allows live buyer/seller only on the protected branch Preview with one fixed mission. |
+| Vercel policy | Keeps Production financially local and allows live buyer/seller only on the protected branch Preview with one fixed local-fixture mission. |
 | Currency policy | Keeps selected mission accounting separate from Rain USD/rUSD, x402 test USDC, and MON gas. |
-| Recovery hashes | Verify the actual local bytes against piece hashes, a Merkle root, and a full-artifact SHA-256. |
+| Recovery hashes | Verify local or remote bytes against piece hashes, a sponsor-pinned Merkle root, and a full-artifact SHA-256. |
 | Verifiers | Supply the two passing attestations required by the local Monad adapter. Their independence is scripted, not decentralized. |
 
 ## 4. Requirements and run modes
@@ -118,6 +120,32 @@ PORT=5000 node server.js
 ```
 
 Local mode needs no secrets. By default it makes no payment or chain network calls. If both readiness origins are configured, requesting `/api/health` can still perform the optional read-only probe described later.
+
+### Remote merchant/provider mode
+
+`MERCHANT_MODE=remote` connects both bargaining and artifact delivery to [https://lazarus-merchant.vercel.app](https://lazarus-merchant.vercel.app). Requests use a server-side bearer token over HTTPS. Lazarus separately pins the merchant's Ed25519 fingerprint and a complete trusted artifact manifest; neither trust root is learned implicitly from the remote service.
+
+The verified acceptance run used USD, completed two bargaining rounds, verified the signed `$9.75` quote, downloaded `8/8` pieces, and matched both the artifact hash and root. The bounty, Rain card allocation, verifier quorum, and reseeding remained local demo state. The run charged `$0.00` and made no chain write.
+
+The merchant console displays settings, negotiation sessions, counters, signed deals, and audit events. Lazarus includes proposed bounty metadata in the offer request, but the merchant currently does not persist it; the console has no financial bounty field, wallet, provider-claim control, or release history.
+
+Remote configuration is server-side and uses these names:
+
+```text
+MERCHANT_MODE
+LAZARUS_STATE_KEY
+MERCHANT_BASE_URL
+MERCHANT_API_TOKEN
+MERCHANT_EXPECTED_KEY_ID
+MERCHANT_CURRENCY
+MERCHANT_TRUSTED_MANIFEST_JSON
+MERCHANT_TIMEOUT_MS
+MERCHANT_RESPONSE_LIMIT_BYTES
+MERCHANT_MAXIMUM_PIECE_BYTES
+MERCHANT_MAXIMUM_TOTAL_BYTES
+```
+
+The current remote deployment accepts one configured currency, USD. Local mode continues to support USD, EUR, GBP, CAD, and AUD. Remote mode cannot be combined with the protected one-shot `x402-testnet` Vercel profile; that profile requires the pinned local fixture.
 
 ### Rain sandbox hybrid mode
 
@@ -205,7 +233,7 @@ Current blocker: the disclosed sandbox key must be rotated and the collateral/co
 | `X402_SELLER_ENABLED` | Enables the durable seller only for protected Preview/local integration; Production keeps it false. |
 | `ALLOW_EXTERNAL_WRITES_ON_VERCEL` | Explicit live-Preview arm; must remain false in Production. |
 | `LIVE_PREVIEW_BRANCH` | Must exactly match Vercel's current Git branch. |
-| `LAZARUS_STATE_KEY` | Production uses `primary`; live Preview requires an isolated `preview-*` value. |
+| `LAZARUS_STATE_KEY` | Local Production uses `primary`; remote Production requires an isolated `merchant-*` value; live Preview requires an isolated `preview-*` value. |
 
 The network probe runs only if **both** `MONAD_RPC_URL` and `X402_FACILITATOR_URL` are configured. Setting only one does not perform a partial probe. Probe reads remain separate from execution. In `x402-testnet`, `writesEnabled` means the availability payment can write; `bountyWritesEnabled` remains false. The payee is receive-only: no payee private key belongs in configuration.
 
@@ -239,7 +267,7 @@ The `$5.00` reward is released cumulatively:
 
 New USD mission creation retains a conservative minimum recovery-service cap of `1201` cents: one cent of discovery reserve plus the USD 12.00 maximum bargaining ceiling. The deterministic USD run uses `976` cents after negotiation. The provider bounty is reported separately.
 
-The server converts the reference reward and service-cap ranges into conservative currency-specific limits and publishes them under `system.missionCreation.currencyLimits`. It rejects rather than silently clamps invalid values. The provider bounty and service cap are separate commitments, and the UI shows maximum authorized exposure as their sum. The title is trimmed and capped at 100 characters. Every mission requires `rightsAttestation: true`, and unsupported currencies, content roots, piece counts, or licenses fail closed. Rain sandbox additionally requires USD. The current form still uses the bundled fixture and does not ingest arbitrary user data.
+The server converts the reference reward and service-cap ranges into conservative currency-specific limits and publishes them under `system.missionCreation.currencyLimits`. It rejects rather than silently clamps invalid values. The provider bounty and service cap are separate commitments, and the UI shows maximum authorized exposure as their sum. The title is trimmed and capped at 100 characters. Every mission requires `rightsAttestation: true`, and unsupported currencies, content roots, piece counts, or licenses fail closed. Rain sandbox additionally requires USD. The form uses exactly one runtime-pinned artifact—the bundled local fixture or sponsor-pinned remote manifest—and does not ingest arbitrary uploads or roots.
 
 See [Hackathon Acceptance and Currency Model](docs/HACKATHON_ACCEPTANCE_AND_CURRENCY.md) for the canonical accounting-versus-settlement matrix.
 
@@ -265,9 +293,9 @@ The orchestrator exposes nine actions because three recovery batches occur while
 - The selected x402 adapter creates or fetches a `402` requirement for the content root.
 - Local mode returns an x402-shaped requirement and a synthetic 10,000-atomic test-USDC reference. It does not sign or move a token.
 - `x402-testnet` requires a fresh x402 v2 exact requirement for official test USDC on `eip155:10143`, signs the capped authorization, and independently verifies the confirmed `Transfer` after the seller/facilitator settles it.
-- Discovery records one modeled candidate provider, Atlas as the recommended provider, a 45-second estimate, a selected-currency equivalent of the USD 12.00 reference estimate, and confidence `0.94`.
+- Discovery records one modeled candidate provider, the configured local or remote provider, a 45-second estimate, the USD 12.00 reference estimate, and confidence `0.94`.
 - Mission spend increases by the selected-currency equivalent of the one-cent reference. In testnet mode the chain settlement remains 10,000 test-USDC atomic units.
-- **After discovery is complete, a separate negotiation session starts.** Atlas uses selected-currency equivalents of the USD 12.00-to-USD 9.75 reference transcript and creates a binding quote.
+- **After discovery is complete, a separate negotiation session starts.** Local Atlas or the authenticated remote merchant uses the USD 12.00-to-USD 9.75 reference transcript. Remote mode verifies an Ed25519-signed binding quote.
 - State becomes `DISCOVERING`, availability becomes `8`, and the event log explicitly says bargaining happened in a separate quote session.
 
 ### Step 2 — fund the recovery bounty
@@ -283,13 +311,13 @@ No onchain bounty escrow is funded in any current mode. A testnet x402 payment i
 
 - A binding quote is mandatory. Missing it fails with `BINDING_QUOTE_REQUIRED`.
 - The quote policy runs again immediately before payment authority is created, catching expiry or mutation since step 1.
-- The quote is converted into an exact payment policy: Rain card only, Atlas merchant only, MCC `5734` only, purpose `archival_egress` only, the selected-currency accepted amount, one transaction, quote expiry, rights required, and the mission kill switch.
+- The quote is converted into an exact payment policy: Rain card only, the quoted allowlisted merchant only, MCC `5734` only, purpose `archival_egress` only, the accepted amount/currency, one transaction, quote expiry, rights required, and the mission kill switch.
 - The accepted quote is below the selected-currency equivalent of the USD 10.00 automatic negotiation approval threshold.
 - The general payment policy performs a separate preflight.
-- The local Monad adapter records the Atlas provider claiming the bounty and the selected-currency stake requirement.
+- The local Monad adapter records the configured provider claiming the demo bounty and the selected-currency stake requirement. Only the initial non-settling bounty proposal is included in merchant offer context; claim and release records are not sent to the merchant console.
 - Rain creates a scoped card tied to the mission and quote. It stores safe metadata only.
 - The built-in challenge proposes an unrelated luxury purchase using the selected-currency equivalent of USD 9.00, merchant `merchant_luxury_market`, MCC `5944`, and purpose `unrelated_purchase`. It is deliberately within the amount ceiling so merchant/MCC/purpose scoping—not merely amount—blocks it.
-- The exact selected-currency Atlas archival-egress purchase is authorized and settled. Rain sandbox can execute this step only for a USD mission.
+- The exact quoted archival-egress purchase is authorized and settled locally. Rain sandbox can execute this step only for a USD mission.
 - For the USD reference run, mission spend becomes `976` cents: USD 0.01 plus USD 9.75. Other currencies retain their own integer minor-unit totals.
 - The negotiation state becomes `consumed`, preventing the quote from being treated as unused authority.
 - State becomes `RECOVERING` and availability becomes `16`.
@@ -298,18 +326,18 @@ In hybrid mode the deliberate challenge also exercises Rain's remote MCC sandbox
 
 ### Step 4 — recover the first batch
 
-- The local recovery adapter releases the actual first 8 of 24 fixture pieces into the recovery session.
+- Recovery obtains the first dynamic batch: local fixture bytes or authenticated remote-provider pieces.
 - Each visible piece reports missing/recovered/verified progress and a short hash prefix.
-- State remains `RECOVERING`, status text reports `8 of 24`, and availability becomes `34`.
+- State remains `RECOVERING`, status text reports the actual batch and manifest total, and availability becomes `34`.
 
 ### Step 5 — recover the second batch
 
-- Recovery advances through 16 of 24 actual local pieces.
-- State remains `RECOVERING`, status text reports `16 of 24`, and availability becomes `58`.
+- Recovery advances through the second one-third milestone of the configured manifest.
+- State remains `RECOVERING`, status text reports the actual count, and availability becomes `58`.
 
 ### Step 6 — recover and verify every piece
 
-- All 24 pieces are recovered.
+- Every configured piece is recovered: 24 locally or eight in the current remote deployment.
 - Every piece is SHA-256 checked against its manifest descriptor.
 - North and East, the first two scripted verifier identities, move to `passed`; West remains unused.
 - Audit quorum becomes `2/2`.
@@ -317,7 +345,7 @@ In hybrid mode the deliberate challenge also exercises Rain's remote MCC sandbox
 
 ### Step 7 — reconstruct, attest, and release 70%
 
-- The 24 verified pieces are concatenated in order.
+- All verified pieces are concatenated in order.
 - The reconstructed artifact SHA-256 must exactly equal the manifest's full-content SHA-256.
 - The local Monad adapter records two unique passing verifier attestations.
 - The recovery tranche releases the selected-currency reward to 70% cumulative (USD 3.50 in the reference mission).
@@ -354,7 +382,7 @@ These are intentionally separate operations even though both occur in step 1.
 | Operation | Question answered | Current adapter | Financial truth |
 | --- | --- | --- | --- |
 | x402 discovery | “Who may have this artifact, and what is the rough estimate?” | `LocalX402Adapter` or `MonadX402Adapter` | Local simulation, or an opt-in real test-USDC testnet transfer |
-| Merchant negotiation | “What binding price and terms will Atlas accept?” | `LocalNegotiationAdapter` | Deterministic local transcript; no merchant network call |
+| Merchant negotiation | “What binding price and terms will the configured merchant accept?” | `LocalNegotiationAdapter` or `RemoteNegotiationAdapter` | Local transcript, or authenticated HTTPS plus an Ed25519-signed quote |
 
 The x402 result's selected-currency equivalent of the USD 12.00 reference estimate is not a binding quote and cannot authorize Rain. Only the later merchant quote, after digest and policy validation, can become card scope.
 
@@ -364,17 +392,17 @@ The local x402 receipt is idempotent in memory for mission/content-root identity
 
 ### Exact USD reference transcript
 
-The only current merchant profile is Atlas Archive Cloud, associated with Atlas Archive Node.
+The reference economics are shared by local Atlas and the deployed Lazarus Recovery Merchant. The remote merchant/provider identities are allowlisted explicitly and the signature key is pinned.
 
 | Sequence | Speaker | Action | Amount | Meaning |
 | ---: | --- | --- | ---: | --- |
-| Offer | Atlas | Initial ask | `$12.00` | Merchant starts at the configured maximum ceiling. |
+| Offer | Merchant | Initial ask | `$12.00` | Merchant starts at the configured maximum ceiling. |
 | Round 1 | Buyer | Counter | `$9.00` | The mission's target price. |
-| Round 1 | Atlas | Counter | `$10.50` | Deterministic midpoint between the current ask and buyer counter, bounded by Atlas's floor. |
+| Round 1 | Merchant | Counter | `$10.50` | Deterministic midpoint between the current ask and buyer counter, bounded by its floor. |
 | Round 2 | Buyer | Counter | `$9.75` | Best-within-policy midpoint between the target and seller counter. |
-| Round 2 | Atlas | Accept | `$9.75` | Atlas's configured floor is met; a binding quote is issued. |
+| Round 2 | Merchant | Accept | `$9.75` | The configured floor is met; remote mode issues an Ed25519-signed binding quote. |
 
-The USD result saves `$2.25`, or `18.75%`, from the initial ask. Other currencies use fixed reference equivalents. The session uses two buyer counteroffer rounds. Mission policy allows up to three rounds, so the accepted result is within the limit.
+The verified remote USD result saves `$2.25`, or `18.75%`, from the initial ask. The session uses two buyer counteroffer rounds. Mission policy allows up to three rounds, so the accepted result is within the limit. The current remote deployment accepts USD only; other currencies remain available in local mode or require coordinated remote reconfiguration.
 
 ### Exact accepted terms
 
@@ -388,19 +416,20 @@ The USD result saves `$2.25`, or `18.75%`, from the initial ask. Other currencie
 }
 ```
 
-The quote is:
+The remote quote is:
 
-- for merchant `merchant_atlas_archive` and MCC `5734`;
-- for provider `provider_atlas_archive`;
+- for the allowlisted remote merchant and MCC `5734`;
+- for the allowlisted remote provider;
 - bound to the mission content root and `archival_egress` purpose;
 - denominated in the mission's selected accounting currency and integer minor units;
 - marked `binding: true`;
 - issued with a 15-minute expiration; and
-- committed by a canonical SHA-256 `quoteDigest`.
+- committed by a canonical SHA-256 `quoteDigest`; and
+- signed with the merchant's Ed25519 key, whose fingerprint is sponsor-pinned.
 
-The adapter rejects malformed session/offer IDs, unsupported providers, ceilings below Atlas's `$9.75` floor, invalid/non-positive amounts, offer-session mismatch, finalized sessions, maximum-round violations, non-improving counters, and unsupported terms. Calls use deterministic local IDs and idempotency keys, and returned state is cloned so caller mutation cannot alter the adapter's stored session.
+The adapters reject malformed identities, wrong provider/root/currency, invalid amounts, offer-session mismatch, finalized sessions, maximum-round violations, non-improving counters, malformed/oversized responses, key-pin mismatch, digest/signature failure, and unsupported terms.
 
-This is a safe integration shape for future live merchant APIs, but the present negotiation is a deterministic simulation. There is no generative-agent bargaining, free-form merchant chat, browser automation, or real quote endpoint.
+Remote negotiation is a real structured API exchange, but it remains deterministic rather than generative. There is no free-form merchant chat or browser automation. The offer includes the proposed bounty as non-settling context, while the merchant console shows the session and signed deal but currently does not persist or display that bounty field.
 
 ### Negotiation API behavior
 
@@ -699,7 +728,7 @@ A contract cannot itself inspect off-chain files or prove seeder independence. E
 
 ## 15. Recovery and integrity engine
 
-`LocalRecoveryAdapter` is the part of the demo that handles actual content bytes.
+`LocalRecoveryAdapter` and `RemoteRecoveryAdapter` handle actual content bytes.
 
 It:
 
@@ -718,11 +747,13 @@ Manifest normalization checks digest shape, piece ordering, byte lengths, count 
 
 Internal `_source` and `_pieceBytes` values are required for the local fixture engine but are stripped from every public state response by the orchestrator's recursive serializer.
 
-This is real local integrity verification, not real network recovery. There is no BitTorrent DHT/tracker, IPFS, archive API, HTTP-range worker, malware scanner, sandboxed content processor, or independent reseeding service.
+Remote mode takes a complete sponsor-pinned manifest from server-side configuration, fetches the provider's manifest over authenticated HTTPS, and requires exact equality before accepting any piece. It bounds JSON, per-piece, and aggregate bytes; verifies piece ordering, sizes, hashes, Merkle root, and reconstructed artifact SHA-256; and safely re-fetches the recorded prefix when a serverless request rehydrates. The current provider manifest contains eight pieces, and the acceptance run verified all `8/8`.
+
+This is real remote transfer and integrity verification, not a durable recovery network. There is no BitTorrent DHT/tracker, IPFS, malware scanner, sandboxed content processor, independent verifier, durable replica host, or independent reseeding service.
 
 ## 16. State and audit model
 
-Top-level state uses `schemaVersion: 1`, one active mission ID, system truth metadata, and a mission array.
+Top-level state uses `schemaVersion: 4`, an immutable runtime-binding marker, one active mission ID, system truth metadata, and a mission array.
 
 Important mission fields:
 
@@ -813,7 +844,7 @@ Main areas:
 | Mission sidebar | Lists and selects missions and opens mission creation with USD/EUR/GBP/CAD/AUD accounting. |
 | Mission header | Shows status/root and exposes run, step, challenge, export, and reset controls. |
 | Lifecycle | Compresses eight internal statuses into five presentation stages: Dead, Discovering, Recovering, Verified, and Reseeded. `FUNDED` folds into Discovering, `VERIFYING` into Recovering, and `COMPLETED` into Reseeded. |
-| Metrics/piece map | Shows availability, recovered/verified pieces, seeders, remaining budget, and all 24 piece states. |
+| Metrics/piece map | Shows availability, recovered/verified pieces, seeders, remaining budget, and every configured piece (`24` local or `8` current remote). |
 | Payment rails | Shows latest safe Rain, local bounty, and local or confirmed testnet x402 receipts. |
 | Timeline | Shows newest mission events received through SSE. |
 | Receipts tab | Displays payment/transaction evidence. |
@@ -823,7 +854,7 @@ Main areas:
 
 The client escapes server-provided HTML values before rendering, supports keyboard movement across audit tabs, uses ARIA live regions and progress semantics, remembers theme in local storage when available, and polls `/api/state` every five seconds if SSE is unavailable or reconnecting.
 
-The mission form accepts a supported accounting currency plus content/license/piece details, but the current server intentionally creates only the bundled CC0 fixture mission. It displays the fixed-reference-rate disclaimer and rejects non-USD currency while Rain sandbox is selected.
+The mission form displays the server-published content root, license, and piece count for exactly one runtime-pinned artifact: the bundled local fixture or sponsor-pinned remote manifest. Arbitrary uploads and roots remain rejected. It displays the fixed-reference-rate disclaimer and rejects non-USD currency while Rain sandbox is selected.
 
 ## 19. Server and integration security
 
@@ -1100,14 +1131,14 @@ The safe local/public demo succeeds when all of the following are visible in sta
 - a supported mission accounting currency is selected and the fixed-reference disclaimer is visible;
 - the x402-shaped local discovery simulation records the one-cent-reference receipt;
 - x402 discovery and merchant bargaining are recorded as separate actions;
-- the selected-currency equivalents of the USD 12.00, USD 9.00, USD 10.50, and USD 9.75 reference transcript produce a binding quote;
+- the USD 12.00, USD 9.00, USD 10.50, and USD 9.75 reference transcript produces a binding quote; remote mode additionally verifies its Ed25519 signature and pinned key;
 - accepted terms are one-time archival egress with no renewal, data sharing, or exclusivity;
 - the quote digest and policy decision are `QUOTE_OK` before payment;
 - the local Monad-style bounty is created and claimed with the stake requirement;
 - an unrelated in-limit purchase is denied;
-- the exact selected-currency Atlas purchase settles locally or in Rain's USD sandbox;
+- the exact allowlisted merchant allocation settles locally or in Rain's USD sandbox;
 - the USD reference mission spend is exactly USD 9.76 and other currencies reconcile in their own minor units;
-- all 24 real local pieces are recovered and verified;
+- all configured pieces are recovered and verified (`24/24` local or `8/8` for the current remote provider);
 - reconstructed SHA-256 matches the manifest;
 - two scripted verifiers satisfy the `2/2` quorum;
 - reward release reaches 70%, 90%, then 100%;
@@ -1116,6 +1147,6 @@ The safe local/public demo succeeds when all of the following are visible in sta
 - the mission reaches `COMPLETED`; and
 - the audit JSON can be exported without secret or card data.
 
-That is the complete, truth-labeled behavior implemented by the current repository.
+The remote acceptance run additionally requires authenticated HTTPS health, a matching sponsor-pinned manifest, two successful bargaining rounds, a signed `$9.75` USD quote, `8/8` valid pieces, and a matching reconstructed hash/root. Its archive allocation, bounty, verifier roles, and reseeding remain local, with `$0.00` charged and no chain write.
 
-An additional capped Preview acceptance run succeeds only when Vercel Deployment Protection is enabled, the one-shot gates hold, the Privy policy and code-level signer allowlist are active, the protected seller durably records the payment ID, `x402-testnet` produces a real transaction hash, the expected official test-USDC `Transfer` is independently confirmed, and the payment ID/receipt/explorer evidence are retained. That testnet transaction proves paid discovery only; the archive bargain/purchase, bounty registry, provider network, verifier network, and reseeding remain local.
+An additional capped Preview acceptance run succeeds only when Vercel Deployment Protection is enabled, the one-shot gates hold, the Privy policy and code-level signer allowlist are active, the protected seller durably records the payment ID, `x402-testnet` produces a real transaction hash, the expected official test-USDC `Transfer` is independently confirmed, and the payment ID/receipt/explorer evidence are retained. That testnet profile uses the pinned local fixture and cannot be combined with remote merchant mode. Its transaction proves paid discovery only; archive purchase, bounty registry, verifier network, and reseeding remain local.

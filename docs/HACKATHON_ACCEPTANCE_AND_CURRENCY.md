@@ -8,7 +8,7 @@ Never add API keys, app secrets, wallet IDs, wallet addresses, seed phrases, Rai
 
 ## One-sentence boundary
 
-Lazarus Mesh supports fixed-reference mission accounting in USD, EUR, GBP, CAD, and AUD; public Production is entirely local-only; a deployment-protected, one-shot branch Preview can settle one capped x402 discovery payment in Monad test USDC through a Privy payer and distinct receive-only payee; the Rain adapter is currently blocked on a rotated key and valid UUID; the archive bargain and full bounty remain local.
+Lazarus Mesh supports fixed-reference local accounting in USD, EUR, GBP, CAD, and AUD; Production can bargain with an authenticated remote merchant and verify its eight-piece provider artifact while all value and chain execution remain local; a separate protected Preview can settle one capped x402 discovery payment with the pinned local fixture; Rain remains blocked on a rotated key and valid UUID; the full bounty remains local.
 
 ## Three kinds of value
 
@@ -19,6 +19,8 @@ Lazarus Mesh supports fixed-reference mission accounting in USD, EUR, GBP, CAD, 
 | Chain gas/collateral | MON | Settlement-submitter gas; native provider collateral exists only in the undeployed reference contract |
 
 Multi-currency accounting does not mean every rail accepts every currency. USDC and MON are not selectable mission-accounting currencies.
+
+The remote merchant accepts one configured currency at a time and is currently USD. It does not make the external service simultaneously multi-currency.
 
 ## Fixed demo references
 
@@ -41,10 +43,10 @@ Debits and required reserves round conservatively upward; maxima round downward.
 | Local defaults | Local scoped-card simulation | Local x402-shaped simulation; seller disabled | Local ledger | USD/EUR/GBP/CAD/AUD; no value moves |
 | Local Rain sandbox | Authenticated sandbox calls after credentials are fixed | Local unless independently enabled | Local ledger | USD only; sandbox rUSD collateral |
 | Local x402 testnet | Local Rain simulation | Dedicated signer plus configured seller | Local ledger | Any accounting currency; settlement remains test USDC |
-| Public Vercel Production | Local | Local buyer; seller disabled | Local ledger | All five accounting currencies; no payment/chain writes |
+| Public Vercel Production | Local, or armed Rain sandbox with an isolated state key | Local buyer; seller disabled | Local ledger | Local mode supports all five; current remote merchant is USD; no payment/chain writes |
 | Protected Vercel branch Preview | Local | Privy buyer plus durable co-located seller | Local ledger | One fixed mission; capped test-USDC discovery settlement |
 
-Rain and Monad selectors remain independent, but Vercel never permits Rain sandbox. Public Production never permits either x402 side. The protected Preview permits buyer and seller only together behind Deployment Protection and the runtime's one-shot gates.
+Rain, Monad, and merchant selectors remain independent within policy constraints, but Vercel never permits Rain sandbox. Public Production never permits either live x402 side. The protected Preview permits buyer and seller only together behind Deployment Protection and the runtime's one-shot gates, and it forbids remote merchant mode.
 
 ## What “x402” means
 
@@ -86,12 +88,13 @@ The demo is acceptable only when:
 
 The adapter implements Rain sandbox collateral setup, scoped-card issuance, authorization, settlement, reversal, and card lookup. Those endpoints simulate card operations and do not prove production-money movement.
 
-The current Rain run is not acceptable yet because:
+The Rain run is now acceptable to present as a sandbox demonstration:
 
-1. the previously disclosed API key must be rotated; and
-2. the supplied collateral/contract value is not a valid UUID.
+1. authenticated health passes for the configured tenant;
+2. the collateral/contract UUID was confirmed against the provider by control, not guessed; and
+3. a full mission issued a real scoped card, settled `$9.75` at MCC `5734`, and had the `$9.00` unrelated-merchant attempt declined — visible in Rain's own ledger.
 
-Do not guess or edit the identifier. Keep `ADAPTER_MODE=local` until Rain supplies both values through a secure channel. Once armed, the mission must use USD, collateral setup uses sandbox rUSD, and the demo must be labeled sandbox simulation.
+Present it as sandbox simulation. The mission must use USD, collateral setup uses sandbox rUSD, and no real money moves. Rotate any key disclosed outside a secret manager.
 
 ## Monad bounty boundary
 
@@ -103,18 +106,20 @@ The full recovery bounty remains `LocalMonadAdapter` in every mode. Bounty creat
 | --- | --- | --- |
 | Real Monad transaction | Protected Preview can produce a confirmed test-USDC x402 transaction | Production/local runs do not; full bounty remains local |
 | Chain matters | Paid discovery gates the provider recommendation and is bound to a verified Transfer | Archive fulfillment and bounty are not chain-dependent yet |
-| Agent autonomy with guardrails | Orchestrator bargains while deterministic policy and restricted Privy signing cap authority | Merchant and verifiers are scripted models |
-| Onchain-native story | Paid availability intelligence plus proof-conditioned recovery/reward model | Do not overstate simulated providers, reseeding, or contract settlement |
+| Agent autonomy with guardrails | Orchestrator bargains with the authenticated merchant while deterministic policy and restricted Privy signing cap authority | Merchant behavior is structured/deterministic; verifiers remain scripted |
+| Remote recovery | Sponsor-pinned manifest, authenticated piece transfer, `8/8` hashes, reconstructed root match | No durable replica host, independent verifier, or persistent reseeding |
+| Onchain-native story | Paid availability intelligence plus proof-conditioned recovery/reward model | Do not overstate local bounty, verifier roles, reseeding, or contract settlement |
 
 ## Demo acceptance checklists
 
-### Public Production demo
+### Remote merchant Production demo
 
-- Confirm Production reports local buyer and seller disabled.
-- Create USD/EUR/GBP/CAD/AUD missions and show the fixed-reference disclaimer.
-- Show the local bargaining transcript and 2.25 reference savings.
+- Confirm Production reports local x402/Rain/Monad execution and the authenticated remote merchant/provider.
+- Use USD; explain that local core accounting supports five currencies but this merchant deployment accepts one at a time.
+- Show two bargaining rounds, the Ed25519-signed 9.75 quote, and 2.25 savings in both Lazarus and the merchant console.
+- Show `8/8` provider pieces, sponsor-pinned manifest equality, and reconstructed hash/root match.
 - Show unrelated purchase denial, verified reconstruction, verifier quorum, and local tranche releases.
-- State that no value moved.
+- State that the offer includes proposed bounty context, the merchant console does not yet persist or display it, and `$0.00` was charged with no chain write.
 
 ### Protected x402 Preview demo
 
@@ -125,7 +130,7 @@ The full recovery bounty remains `LocalMonadAdapter` in every mode. Bounty creat
 - Run only the preloaded bundled mission; reset and new-mission creation must be denied.
 - Retain payment ID, settlement response, transaction hash, confirmation evidence, exact Transfer, and explorer link.
 - Reconcile any ambiguous outcome before retry.
-- State explicitly that bargaining, archive payment, bounty, provider network, verifier network, and reseeding remain local.
+- State explicitly that this x402 profile uses the local fixture; archive payment, bounty, verifier network, and reseeding remain local.
 
 ### Rain sandbox demo
 
@@ -139,9 +144,9 @@ The full recovery bounty remains `LocalMonadAdapter` in every mode. Bounty creat
 
 - live FX or settlement in EUR/GBP/CAD/AUD;
 - a production card purchase or real fiat movement;
-- a live bargaining merchant or merchant-signed quote;
+- production merchant checkout, payment reconciliation, or a merchant-visible bounty;
 - a deployed Monad bounty registry;
-- a real provider/verifier/seeding network;
+- durable provider storage, an independent verifier network, or persistent seeding;
 - unrestricted wallet authority;
 - a public paid x402 seller; or
 - production readiness.

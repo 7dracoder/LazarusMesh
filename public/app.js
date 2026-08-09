@@ -28,6 +28,9 @@
       maximumBudgetMinor: 500000,
       minimumRewardMinor: 100,
       maximumRewardMinor: 100000,
+      pieceCount: 24,
+      contentRoot: "",
+      license: "CC0-1.0",
       available: true,
       unavailableReason: "",
     },
@@ -69,6 +72,11 @@
     currencyInput: $("#currency-input"),
     budgetInput: $("#budget-input"),
     rewardInput: $("#reward-input"),
+    contentRootInput: $("#content-root-input"),
+    contentRootHelp: $("#content-root-help"),
+    contentRootLabel: $("#content-root-label"),
+    pieceCountInput: $("#piece-count-input"),
+    licenseInput: $("#license-input"),
     costTotal: $("#cost-total"),
     costReward: $("#cost-reward"),
     costReserve: $("#cost-reserve"),
@@ -176,6 +184,17 @@
     if (!value || typeof value !== "object") return null;
     const candidate = value.label ?? value.name ?? value.network ?? value.id;
     return typeof candidate === "string" && candidate.trim() ? candidate.trim() : null;
+  }
+
+  function safeHttpUrl(value) {
+    if (typeof value !== "string" || !value.trim()) return null;
+    try {
+      const parsed = new URL(value, window.location.origin);
+      if (!["https:", "http:"].includes(parsed.protocol) || parsed.username || parsed.password) return null;
+      return parsed.href;
+    } catch {
+      return null;
+    }
   }
 
   function formatInstant(value, fallback = "Not issued") {
@@ -444,6 +463,11 @@
       availableCurrencies,
       currencyMode: config.currencyConfig?.mode ?? "demo-fixed-not-market-rate",
       currencyDisclaimer: config.currencyConfig?.disclaimer ?? "Fixed demo reference values; not live market rates.",
+      sourceMode: String(config.sourceMode ?? "bundled-verified-fixture"),
+      manifestName: String(config.manifestName ?? "verified artifact"),
+      contentRoot: String(config.contentRoot ?? ""),
+      pieceCount: Math.max(1, Math.round(finiteNumber(config.pieceCount, 24))),
+      license: String(config.license ?? "CC0-1.0"),
       available,
       unavailableReason: String(config.unavailableReason ?? config.message ?? "Mission creation is temporarily unavailable."),
     };
@@ -462,6 +486,24 @@
       const disabled = !policy.availableCurrencies.includes(code);
       return `<option value="${escapeHtml(code)}"${code === policy.currency ? " selected" : ""}${disabled ? " disabled" : ""}>${escapeHtml(`${code} — ${item.label || code}`)}${disabled ? " (not on active rail)" : ""}</option>`;
     }).join("");
+    const remoteArtifact = policy.sourceMode.includes("remote");
+    elements.contentRootInput.value = policy.contentRoot;
+    elements.contentRootInput.placeholder = remoteArtifact
+      ? "Pinned from the authenticated provider manifest"
+      : "Generated from the bundled verified fixture";
+    elements.contentRootLabel.textContent = remoteArtifact
+      ? "Sponsor-pinned provider content root"
+      : "Verified fixture content root";
+    elements.contentRootHelp.textContent = remoteArtifact
+      ? `${policy.manifestName} is pinned by the sponsor; the live provider manifest, every piece, and the reconstructed root must match it.`
+      : "This build recovers the bundled verified manifest; its root is checked again after reconstruction.";
+    elements.pieceCountInput.value = String(policy.pieceCount);
+    elements.pieceCountInput.min = String(policy.pieceCount);
+    elements.pieceCountInput.max = String(policy.pieceCount);
+    if (!Array.from(elements.licenseInput.options).some((option) => option.value === policy.license)) {
+      elements.licenseInput.add(new Option(policy.license, policy.license));
+    }
+    elements.licenseInput.value = policy.license;
     const budgetHelp = $("#budget-help");
     const rewardHelp = $("#reward-help");
     const currencyHelp = $("#currency-help");
@@ -496,6 +538,62 @@
     `;
   }
 
+  function marketplaceRuntime(system) {
+    const integrations = asObject(system.integrations);
+    const negotiation = asObject(integrations.negotiation ?? system.negotiation ?? system.adapters?.negotiation);
+    const recovery = asObject(integrations.recovery ?? system.recovery ?? system.adapters?.recovery);
+    const healthAdapters = asObject(app.health?.adapters);
+    const negotiationHealth = asObject(healthAdapters.negotiation);
+    const recoveryHealth = asObject(healthAdapters.recovery);
+    const merchantConfigured = negotiation.liveMerchantApi === true;
+    const providerConfigured = recovery.networkedProviders === true;
+    const merchantAdapterHealthPresent = Object.keys(negotiationHealth).length > 0;
+    const providerAdapterHealthPresent = Object.keys(recoveryHealth).length > 0;
+    const overallHealthFailed = Boolean(app.healthCheckedAt) && app.health?.ok === false;
+    const merchantHealthChecked = merchantAdapterHealthPresent || (overallHealthFailed && merchantConfigured);
+    const providerHealthChecked = providerAdapterHealthPresent || (overallHealthFailed && providerConfigured);
+    const staticMerchantReady = merchantConfigured
+      && negotiation.merchantAuthenticated === true
+      && negotiation.merchantSignedQuotes === true;
+    const merchantPaused = merchantHealthChecked && negotiationHealth.paused === true;
+    const providerPaused = providerHealthChecked && recoveryHealth.paused === true;
+    const merchantHealthFailed = merchantHealthChecked
+      && (!merchantAdapterHealthPresent || negotiationHealth.ok !== true || merchantPaused);
+    const providerHealthFailed = providerHealthChecked
+      && (!providerAdapterHealthPresent || recoveryHealth.ok !== true || providerPaused);
+    const merchantHealthReady = merchantAdapterHealthPresent
+      && negotiationHealth.ok === true
+      && negotiationHealth.authenticated === true
+      && negotiationHealth.signedQuotes === true
+      && !merchantPaused;
+    const providerHealthReady = providerAdapterHealthPresent
+      && recoveryHealth.ok === true
+      && !providerPaused;
+    const merchantReady = merchantConfigured
+      && (merchantHealthChecked ? merchantHealthReady : staticMerchantReady);
+    const providerReady = providerConfigured
+      && (providerHealthChecked ? providerHealthReady : true);
+
+    return {
+      negotiation,
+      recovery,
+      merchantConfigured,
+      providerConfigured,
+      staticMerchantReady,
+      staticProviderReady: providerConfigured,
+      merchantHealthChecked,
+      providerHealthChecked,
+      merchantPaused,
+      providerPaused,
+      merchantHealthFailed,
+      providerHealthFailed,
+      merchantReady,
+      providerReady,
+      merchantNeedsAttention: merchantHealthFailed || (merchantConfigured && !merchantReady),
+      providerNeedsAttention: providerHealthFailed || (providerConfigured && !providerReady),
+    };
+  }
+
   function renderDeploymentReadiness(system, rawMode, network) {
     const integrations = asObject(system.integrations);
     const healthAdapters = asObject(app.health?.adapters);
@@ -506,18 +604,29 @@
     const monadNetwork = asObject(monadHealth.network);
     const x402 = asObject(integrations.x402 ?? system.x402 ?? system.adapters?.x402);
     const x402Health = asObject(healthAdapters.x402);
-    const negotiation = asObject(integrations.negotiation ?? system.negotiation ?? system.adapters?.negotiation);
-    const recovery = asObject(integrations.recovery ?? system.recovery ?? system.adapters?.recovery);
+    const healthPayloadUnavailable = Boolean(app.healthCheckedAt)
+      && app.health?.ok !== true
+      && Object.keys(healthAdapters).length === 0;
+    const market = marketplaceRuntime(system);
+    const negotiation = market.negotiation;
+    const actors = asObject(system.actors);
+    const merchantActor = asObject(actors.merchant);
+    const providerActor = asObject(actors.provider);
+    const merchantName = objectLabel(merchantActor) ?? "Atlas Archive Cloud";
+    const providerName = objectLabel(providerActor) ?? "Atlas Archive Node";
 
     const rainMode = String(rainHealth.mode ?? rain.mode ?? "local").toLowerCase();
     const rainExternal = rain.external === true || /sandbox|external/.test(rainMode) || /hybrid[_ -]?sandbox/.test(rawMode.toLowerCase());
-    const rainChecked = Object.keys(rainHealth).length > 0;
-    const rainReady = rainChecked ? rainHealth.ok === true : rain.ready !== false && rain.status !== "error";
-    const rainAuthenticated = rainHealth.authenticated === true || rain.authenticated === true;
+    const rainHealthPresent = Object.keys(rainHealth).length > 0;
+    const rainChecked = rainHealthPresent || healthPayloadUnavailable;
+    const rainReady = rainHealthPresent
+      ? rainHealth.ok === true
+      : !healthPayloadUnavailable && rain.ready !== false && rain.status !== "error";
+    const rainCredentialReady = rainHealth.authenticated === true || rain.authenticated === true;
     const rainStatus = !rainReady
       ? "Sandbox unavailable"
-      : rainExternal && rainAuthenticated
-        ? "Sandbox authenticated"
+      : rainExternal && rainCredentialReady
+        ? "Sandbox health passed"
         : rainExternal
           ? "Sandbox connected"
           : "Local adapter";
@@ -525,27 +634,46 @@
       ? "External sandbox card authority"
       : "No external card mutations";
 
-    const monadWrites = monad.writesEnabled === true || monadHealth.writesEnabled === true;
+    const monadHealthUnavailable = healthPayloadUnavailable && Object.keys(monadHealth).length === 0;
+    const monadWrites = !monadHealthUnavailable
+      && (monad.writesEnabled === true || monadHealth.writesEnabled === true);
     const probeConfigured = monadNetwork.configured === true || monad.rpcConfigured === true;
     const probePassed = monadNetwork.ok === true;
-    const monadStatus = monadWrites
+    const monadStatus = monadHealthUnavailable
+      ? "Runtime health unavailable"
+      : monadWrites
       ? "Testnet writes enabled"
       : probePassed
         ? "Network probe passed · read-only"
         : "Local ledger · read-only";
-    const monadDetail = `${objectLabel(monadNetwork.caip2Network) ?? objectLabel(monad.network) ?? network}${probeConfigured && !probePassed ? " · probe unavailable" : ""}`;
+    const monadDetail = monadHealthUnavailable
+      ? "Write and network readiness could not be confirmed"
+      : `${objectLabel(monadNetwork.caip2Network) ?? objectLabel(monad.network) ?? network}${probeConfigured && !probePassed ? " · probe unavailable" : ""}`;
 
-    const x402Live = x402.liveSettlementEnabled === true || x402Health.liveSettlementEnabled === true;
+    const x402HealthUnavailable = healthPayloadUnavailable && Object.keys(x402Health).length === 0;
+    const x402Live = !x402HealthUnavailable
+      && (x402.liveSettlementEnabled === true || x402Health.liveSettlementEnabled === true);
     const facilitatorConfigured = x402Health.facilitatorConfigured === true || x402.facilitatorConfigured === true;
-    const x402Status = x402Live ? "Testnet settlement enabled" : "Local settlement only";
-    const x402Detail = facilitatorConfigured ? "Facilitator readiness configured" : "Machine handshake simulated locally";
+    const x402Status = x402HealthUnavailable
+      ? "Runtime health unavailable"
+      : x402Live ? "Testnet settlement enabled" : "Local settlement only";
+    const x402Detail = x402HealthUnavailable
+      ? "Settlement readiness could not be confirmed"
+      : facilitatorConfigured ? "Facilitator readiness configured" : "Machine handshake simulated locally";
 
-    const merchantConnected = negotiation.liveMerchantApi === true;
-    const merchantLive = merchantConnected
-      && negotiation.merchantAuthenticated === true
-      && negotiation.merchantSignedQuotes === true;
-    const providerLive = recovery.networkedProviders === true;
-    const marketStatus = merchantLive && providerLive
+    const merchantConnected = market.merchantConfigured;
+    const merchantLive = market.merchantReady;
+    const providerLive = market.providerReady;
+    const bountyMessaging = negotiation.bountyMessaging === true;
+    const marketStatus = market.merchantPaused
+      ? "Merchant API paused"
+      : market.providerPaused
+        ? "Provider API paused"
+        : market.merchantHealthFailed
+          ? "Merchant API unavailable"
+          : market.providerHealthFailed
+            ? "Provider API unavailable"
+            : merchantLive && providerLive
       ? "External actors connected"
       : merchantConnected && !merchantLive
         ? "Merchant API is not trusted"
@@ -554,16 +682,30 @@
         : providerLive
           ? "Provider connected · merchant local"
           : "Demo actors only";
-    const marketDetail = merchantConnected || providerLive
-      ? `${merchantLive ? "Authenticated merchant API" : merchantConnected ? "Unverified merchant API" : "Merchant simulator"} · ${providerLive ? "Provider API" : "Bundled fixture"}`
-      : "Atlas seller + provider are simulated";
+    const marketDetail = market.merchantNeedsAttention || market.providerNeedsAttention
+      ? `${market.merchantPaused ? `${merchantName} paused` : market.merchantHealthFailed ? `${merchantName} health failed` : merchantConnected && !merchantLive ? `${merchantName} not ready` : `${merchantName} simulated`} · ${market.providerPaused ? `${providerName} paused` : market.providerHealthFailed ? `${providerName} health failed` : providerLive ? `${providerName} API ready` : `${providerName} fixture`}`
+      : merchantConnected || providerLive
+      ? `${merchantLive ? `${merchantName} signed-quote API ready` : merchantConnected ? `${merchantName} not ready` : `${merchantName} simulated`} · ${providerLive ? `${providerName} API ready` : `${providerName} fixture`}`
+      : `${merchantName} + ${providerName} are simulated`;
 
-    const needsAttention = !rainReady
+    const externalMarketSummary = [
+      merchantLive ? `${merchantName} signed-quote API is ready over HTTPS` : null,
+      providerLive ? `${providerName} provider health passed` : null,
+    ].filter(Boolean).join("; ");
+    const bountyBoundary = bountyMessaging
+      ? "The provider bounty is included in merchant messages; settlement remains a separate policy step."
+      : "The provider bounty remains in the local demo ledger and is not sent to the merchant.";
+
+    const needsAttention = healthPayloadUnavailable
+      || !rainReady
       || app.missionCreationPolicy.available === false
-      || (merchantConnected && !merchantLive);
+      || market.merchantNeedsAttention
+      || market.providerNeedsAttention;
     elements.readinessStrip.dataset.state = needsAttention ? "attention" : rainExternal ? "sandbox" : "local";
     elements.readinessSummary.textContent = needsAttention
       ? "A required adapter needs attention before a mission can run."
+      : externalMarketSummary
+        ? `${externalMarketSummary}. ${bountyBoundary}`
       : rainExternal
         ? x402Live
           ? "Hybrid sandbox/testnet: Rain sandbox and Monad x402 are external; bounty and marketplace actors remain local."
@@ -573,17 +715,33 @@
           : "Demo simulation: no external merchant or provider agents are contacted; no funds or chain writes occur.";
     elements.readinessItems.innerHTML = [
       readinessItem("Rain", rainStatus, rainDetail, !rainReady ? "attention" : rainExternal ? "sandbox" : "local"),
-      readinessItem("Monad", monadStatus, monadDetail, monadWrites ? "testnet" : probePassed ? "ready" : "local"),
-      readinessItem("x402", x402Status, x402Detail, x402Live ? "testnet" : "local"),
-      readinessItem("Marketplace", marketStatus, marketDetail, merchantConnected && !merchantLive ? "attention" : merchantLive && providerLive ? "ready" : "local"),
+      readinessItem("Monad", monadStatus, monadDetail, monadHealthUnavailable ? "attention" : monadWrites ? "testnet" : probePassed ? "ready" : "local"),
+      readinessItem("x402", x402Status, x402Detail, x402HealthUnavailable ? "attention" : x402Live ? "testnet" : "local"),
+      readinessItem("Marketplace", marketStatus, marketDetail, market.merchantNeedsAttention || market.providerNeedsAttention ? "attention" : merchantLive && providerLive ? "ready" : "local"),
     ].join("");
 
     elements.footerPrimary.textContent = "Deterministic recovery demo with bounded policy authority.";
-    elements.footerRuntime.textContent = `${merchantLive ? "Merchant API" : "Simulated merchant"} · ${providerLive ? "Provider API" : "Bundled fixture provider"} · ${rainExternal ? "Rain sandbox" : "Rain local"} · ${monadWrites ? "Monad testnet writes" : "Monad local ledger / testnet read-only"}`;
+    const merchantRuntime = merchantLive
+      ? `${merchantName} API ready`
+      : market.merchantNeedsAttention
+        ? `${merchantName} unavailable`
+        : `Simulated ${merchantName}`;
+    const providerRuntime = providerLive
+      ? `${providerName} API ready`
+      : market.providerNeedsAttention
+        ? `${providerName} unavailable`
+        : `Bundled ${providerName}`;
+    elements.footerRuntime.textContent = healthPayloadUnavailable
+      ? `${merchantRuntime} · ${providerRuntime} · runtime health unavailable`
+      : `${merchantRuntime} · ${providerRuntime} · ${rainExternal ? "Rain sandbox" : "Rain local"} · ${monadWrites ? "Monad testnet writes" : "Monad local ledger / testnet read-only"}`;
     if (elements.runtimeFootnote) {
-      elements.runtimeFootnote.innerHTML = rainExternal
-        ? `${escapeHtml(rainStatus)}<br />Monad ${monadWrites ? "testnet writes enabled" : "local ledger · testnet read-only"}`
-        : "Local demo simulation<br />No external merchants, providers, or payment mutations";
+      elements.runtimeFootnote.innerHTML = market.merchantNeedsAttention || market.providerNeedsAttention
+        ? `${escapeHtml(market.merchantPaused ? `${merchantName} paused` : market.merchantHealthFailed ? `${merchantName} health unavailable` : `${merchantName} not ready`)}<br />${escapeHtml(market.providerPaused ? `${providerName} paused` : market.providerHealthFailed ? `${providerName} health unavailable` : providerLive ? `${providerName} API ready` : `${providerName} bundled locally`)}`
+        : merchantLive || providerLive
+        ? `${escapeHtml(merchantLive ? `${merchantName} API ready` : `${merchantName} simulated`)}<br />${escapeHtml(providerLive ? `${providerName} API ready · bounty local` : `${providerName} bundled locally`)}`
+        : rainExternal
+          ? `${escapeHtml(rainStatus)}<br />Monad ${monadWrites ? "testnet writes enabled" : "local ledger · testnet read-only"}`
+          : "Local demo simulation<br />No external merchants, providers, or payment mutations";
     }
   }
 
@@ -628,11 +786,43 @@
     const railTotal = finiteNumber(system.paymentRails?.total ?? system.railsTotal, 3);
     const quorum = titleCase(system.verifiers?.status ?? system.quorum?.status ?? "online");
     const actors = asObject(system.actors);
-    const externalActors = finiteNumber(actors.externalConnected, 0);
+    const merchantActor = asObject(actors.merchant);
+    const providerActor = asObject(actors.provider);
+    const merchantName = objectLabel(merchantActor) ?? "Atlas Archive Cloud";
+    const providerName = objectLabel(providerActor) ?? "Atlas Archive Node";
+    const market = marketplaceRuntime(system);
+    const merchantMode = market.merchantReady
+      ? "External signed-quote API ready"
+      : market.merchantPaused
+        ? "External merchant API paused"
+        : market.merchantHealthFailed
+          ? "External merchant API health failed"
+          : market.merchantConfigured
+            ? "External merchant API not ready"
+            : "Simulated local merchant";
+    const providerMode = market.providerReady
+      ? "External provider API ready"
+      : market.providerPaused
+        ? "External provider API paused"
+        : market.providerHealthFailed
+          ? "External provider API health failed"
+          : market.providerConfigured
+            ? "External provider API not ready"
+            : "Bundled local provider";
     const requiredActors = finiteNumber(actors.externalRequired, 3);
+    let externalActors = finiteNumber(actors.externalConnected, 0);
+    if (market.merchantHealthChecked) {
+      externalActors += Number(market.merchantReady) - Number(market.staticMerchantReady);
+    }
+    if (market.providerHealthChecked) {
+      externalActors += Number(market.providerReady) - Number(market.staticProviderReady);
+    }
+    externalActors = clamp(externalActors, 0, requiredActors);
     elements.protocolList.innerHTML = `
       <div><dt>Orchestrator</dt><dd><i></i>${escapeHtml(orchestrator)}</dd></div>
       <div><dt>External payment rails</dt><dd><i></i>${rails} / ${railTotal}</dd></div>
+      <div><dt>Merchant</dt><dd title="${escapeHtml(`${merchantName} · ${merchantMode}`)}"><i></i>${escapeHtml(merchantName)}</dd></div>
+      <div><dt>Provider</dt><dd title="${escapeHtml(`${providerName} · ${providerMode}`)}"><i></i>${escapeHtml(providerName)}</dd></div>
       <div><dt>External actors</dt><dd><i></i>${externalActors} / ${requiredActors}</dd></div>
       <div><dt>Verifier quorum</dt><dd><i></i>${escapeHtml(quorum)}</dd></div>
     `;
@@ -749,7 +939,9 @@
     const financialExecution = asObject(app.data.system?.financialExecution);
     const testnetTokensCanMove = financialExecution.testnetTokensCanMove === true;
     const demoOnly = financialExecution.realFunds !== true && !testnetTokensCanMove;
-    const networkedProviders = app.data.system?.recovery?.networkedProviders === true;
+    const market = marketplaceRuntime(app.data.system ?? {});
+    const networkedProviders = market.providerReady;
+    const persistentReseeding = networkedProviders && market.recovery.persistentReseeding === true;
 
     $("#availability-value").textContent = `${availability}%`;
     $("#availability-bar").style.width = `${availability}%`;
@@ -760,14 +952,16 @@
         ? "Root fully reconstructed"
         : "Awaiting recovery";
     $("#seeders-value").textContent = String(seeders);
-    if (elements.seedersLabel) elements.seedersLabel.textContent = networkedProviders ? "Active seeders" : "Demo replicas";
-    $("#seeders-detail").textContent = !networkedProviders
-      ? seeders > 0 ? "Modeled locally · no peer network" : "No demo replicas yet"
+    if (elements.seedersLabel) elements.seedersLabel.textContent = persistentReseeding ? "Active seeders" : "Demo replicas";
+    $("#seeders-detail").textContent = !persistentReseeding
+      ? networkedProviders
+        ? seeders > 0 ? "Delivered externally · replicas modeled locally" : "External source · no demo replicas yet"
+        : seeders > 0 ? "Modeled locally · no peer network" : "No demo replicas yet"
       : seeders > 1
-      ? "Resilient mesh online"
-      : seeders === 1
-        ? "Single recovery source"
-        : "Artifact offline";
+        ? "Resilient mesh online"
+        : seeders === 1
+          ? "Single recovery source"
+          : "Artifact offline";
     $("#budget-value").textContent = displayMoney(remaining, budget.currency);
     if (elements.budgetLabel) {
       elements.budgetLabel.textContent = demoOnly
@@ -1161,12 +1355,16 @@
     });
 
     if (acceptedQuote) {
+      const market = marketplaceRuntime(app.data.system ?? {});
+      const merchantSigned = acceptedQuote.merchantSigned === true;
       transcript.push({
         party: "policy",
         speaker: "Policy engine",
-        message: app.data.system?.negotiation?.ready === true
-          ? "Merchant-authenticated quote accepted inside the approved envelope"
-          : "Demo quote accepted inside the local policy envelope",
+        message: market.merchantReady
+          ? "Verified merchant-signed quote accepted inside the approved envelope"
+          : merchantSigned
+            ? "Recorded merchant-signed quote retained; merchant API is not currently ready"
+            : "Demo quote accepted inside the local policy envelope",
         amountMinor: firstMinor(acceptedQuote.amountMinor),
         timestamp: acceptedQuote.acceptedAt ?? negotiation.completedAt,
       });
@@ -1220,9 +1418,10 @@
     const rounds = asArray(negotiation.rounds);
     const quote = negotiation.acceptedQuote ?? negotiation.proposedQuote ?? null;
     const askMinor = firstMinor(
-      negotiation.initialAmountMinor,
       offers[0]?.amountMinor,
       offers[0]?.priceMinor,
+      negotiation.initialOfferAmountMinor,
+      negotiation.initialAmountMinor,
       negotiation.maximumAmountMinor,
     );
     const acceptedMinor = firstMinor(
@@ -1249,10 +1448,15 @@
       negotiation.policy?.maximumRounds,
       negotiation.policy?.maxRounds,
     );
+    const actorRuntime = asObject(app.data.system?.actors);
+    const buyerActor = asObject(actorRuntime.buyer);
+    const merchantActor = asObject(actorRuntime.merchant);
+    const providerActor = asObject(actorRuntime.provider);
     const merchantName = quote?.merchantName
       ?? quote?.merchant?.name
       ?? offers[0]?.merchantName
       ?? offers[0]?.merchant?.name
+      ?? merchantActor.name
       ?? "Awaiting merchant";
     const transcript = negotiationTranscript(negotiation, quote);
     const terms = dealTermEntries(negotiation, quote);
@@ -1262,21 +1466,66 @@
     const sessionId = negotiation.sessionId ?? "Not opened";
     const quoteId = quote?.quoteId ?? "Not issued";
     const dealCurrency = String(quote?.currency ?? negotiation.allowedCurrencies?.[0] ?? mission.budget?.currency ?? "USD").toUpperCase();
-    const negotiationRuntime = asObject(app.data.system?.negotiation);
-    const actorRuntime = asObject(app.data.system?.actors);
-    const buyerActor = asObject(actorRuntime.buyer);
-    const providerActor = asObject(actorRuntime.provider);
-    const merchantConnected = negotiationRuntime.liveMerchantApi === true;
-    const liveMerchant = merchantConnected
-      && negotiationRuntime.merchantAuthenticated === true
-      && negotiationRuntime.merchantSignedQuotes === true;
-    const liveProvider = app.data.system?.recovery?.networkedProviders === true;
+    const market = marketplaceRuntime(app.data.system ?? {});
+    const negotiationRuntime = market.negotiation;
+    const merchantConnected = market.merchantConfigured;
+    const liveMerchant = market.merchantReady;
+    const liveProvider = market.providerReady;
     const merchantType = liveMerchant
-      ? "Authenticated merchant API"
-      : merchantConnected
-        ? "Unverified merchant API (blocked)"
-        : "Simulated demo merchant";
-    const providerType = liveProvider ? "External provider API" : "Bundled local fixture";
+      ? "External signed-quote API · ready"
+      : market.merchantPaused
+        ? "External merchant API · paused"
+        : market.merchantHealthFailed
+          ? "External merchant API · health failed"
+          : merchantConnected
+            ? "External merchant API · not ready"
+            : "Simulated demo merchant";
+    const providerType = liveProvider
+      ? "External provider API · ready"
+      : market.providerPaused
+        ? "External provider API · paused"
+        : market.providerHealthFailed
+          ? "External provider API · health failed"
+          : market.providerConfigured
+            ? "External provider API · not ready"
+            : "Bundled local fixture";
+    const budget = budgetFor(mission);
+    const bountyMessaging = negotiationRuntime.bountyMessaging === true;
+    const bountyValue = displayMoney(budget.reward, budget.currency);
+    const bountyChannel = bountyMessaging
+      ? "Included in merchant API messages · settlement separate"
+      : "Local demo ledger · not sent to merchant";
+    const merchantConsoleUrl = safeHttpUrl(merchantActor.consoleUrl);
+    const merchantBoundary = liveMerchant
+      ? "The offer came from an external merchant session and its signed quote passed application verification."
+      : market.merchantPaused
+        ? "The merchant API is paused, so the UI does not treat it as connected."
+        : market.merchantHealthFailed
+          ? "The merchant health check failed, so the UI does not treat it as connected."
+          : merchantConnected
+            ? "The merchant API is configured but not ready; payment remains blocked."
+            : "This quote binds only the local mission simulation; no external seller was contacted and no purchase was made.";
+    const boundaryNote = `${merchantBoundary} ${bountyMessaging
+      ? `The ${bountyValue} provider bounty is included in merchant API messages, but that message does not itself settle or pay it.`
+      : `The ${bountyValue} provider bounty exists only in the local demo ledger and is not sent to the merchant.`}`;
+    const sessionLabel = liveMerchant
+      ? "External merchant session"
+      : market.merchantPaused
+        ? "Merchant session paused"
+        : market.merchantHealthFailed
+          ? "Merchant session unavailable"
+          : merchantConnected
+            ? "Merchant session not ready"
+            : "Simulated negotiation";
+    const connectionLabel = liveMerchant
+      ? "HTTPS · signed-quote checks ready"
+      : market.merchantPaused
+        ? "Paused · not connected"
+        : market.merchantHealthFailed
+          ? "Health failed · not connected"
+          : merchantConnected
+            ? "Not ready · payment blocked"
+            : "In-process messages";
 
     const transcriptHtml = transcript.length
       ? `<ol class="deal-transcript" aria-label="Merchant offer transcript">${transcript.map((entry) => `
@@ -1297,7 +1546,7 @@
       <div class="deal-audit">
         <section class="deal-summary" aria-label="Negotiated deal summary">
           <div class="deal-status-row">
-            <span>${liveMerchant ? "External merchant session" : "Simulated negotiation"}</span>
+            <span>${escapeHtml(sessionLabel)}</span>
             <em class="audit-state${failed ? " is-blocked" : pending ? " is-pending" : ""}">${escapeHtml(titleCase(status))}</em>
           </div>
           <div class="deal-price-flow" aria-label="Initial ask ${escapeHtml(displayMinor(askMinor, dealCurrency))}, accepted amount ${escapeHtml(displayMinor(acceptedMinor, dealCurrency))}, savings ${escapeHtml(displayMinor(savingsMinor, dealCurrency))} or ${escapeHtml(savingsPercent)}">
@@ -1312,7 +1561,10 @@
             <div><dt>Buyer</dt><dd>${escapeHtml(buyerActor.name ?? "Lazarus buyer policy")}</dd></div>
             <div><dt>Provider</dt><dd>${escapeHtml(providerActor.name ?? "Atlas Archive Node")}</dd></div>
             <div><dt>Provider type</dt><dd>${escapeHtml(providerType)}</dd></div>
-            <div><dt>Connection</dt><dd>${escapeHtml(liveMerchant ? "Authenticated HTTPS" : merchantConnected ? "Untrusted HTTPS · payment blocked" : "In-process messages")}</dd></div>
+            <div><dt>Provider bounty</dt><dd>${escapeHtml(bountyValue)}</dd></div>
+            <div><dt>Bounty channel</dt><dd title="${escapeHtml(bountyChannel)}">${escapeHtml(bountyChannel)}</dd></div>
+            ${merchantConsoleUrl ? `<div><dt>Merchant console</dt><dd><a href="${escapeHtml(merchantConsoleUrl)}" target="_blank" rel="noopener noreferrer">Open console ↗</a></dd></div>` : ""}
+            <div><dt>Connection</dt><dd>${escapeHtml(connectionLabel)}</dd></div>
             <div><dt>Rounds</dt><dd>${rounds.length}${maximumRounds === null ? "" : ` / ${maximumRounds}`}</dd></div>
             <div><dt>Session</dt><dd title="${escapeHtml(sessionId)}">${escapeHtml(shorten(sessionId, 9, 6))}</dd></div>
             <div><dt>Quote</dt><dd title="${escapeHtml(quoteId)}">${escapeHtml(shorten(quoteId, 9, 6))}</dd></div>
@@ -1321,13 +1573,13 @@
           </dl>
         </section>
         <section class="deal-section" aria-labelledby="deal-transcript-heading">
-          <div class="deal-section-heading"><strong id="deal-transcript-heading">${liveMerchant ? "External offer transcript" : "Simulated offer transcript"}</strong><span>${transcript.length} entries</span></div>
+          <div class="deal-section-heading"><strong id="deal-transcript-heading">${liveMerchant ? "External offer transcript" : merchantConnected ? "Recorded offer transcript" : "Simulated offer transcript"}</strong><span>${transcript.length} entries</span></div>
           ${transcriptHtml}
         </section>
         <section class="deal-section" aria-labelledby="deal-terms-heading">
-          <div class="deal-section-heading"><strong id="deal-terms-heading">Exact terms</strong><span>${liveMerchant ? "Merchant-authenticated quote" : "Policy-bound demo quote"}</span></div>
+          <div class="deal-section-heading"><strong id="deal-terms-heading">Exact terms</strong><span>${liveMerchant ? "Verified merchant-signed quote" : "Policy-bound recorded quote"}</span></div>
           ${termsHtml}
-          ${liveMerchant ? "" : '<p class="deal-boundary-note">This quote binds only the local mission simulation. No external seller was contacted and no purchase was made.</p>'}
+          <p class="deal-boundary-note">${escapeHtml(boundaryNote)}</p>
         </section>
       </div>
     `;
@@ -1545,7 +1797,7 @@
       } finally {
         app.healthCheckedAt = Date.now();
         app.healthRequest = null;
-        renderSystem();
+        render();
       }
       return app.health;
     })();
@@ -1819,12 +2071,12 @@
     const values = validateMissionForm();
     if (!values) return;
 
-    const pieceCount = Math.round(finiteNumber(values.formData.get("pieceCount"), 24));
-    const license = String(values.formData.get("license") ?? "CC0-1.0");
+    const pieceCount = app.missionCreationPolicy.pieceCount;
+    const license = app.missionCreationPolicy.license;
     const environment = objectLabel(app.data.system?.mode) ?? "local";
     const payload = {
       title: values.title,
-      contentRoot: String(values.formData.get("contentRoot") ?? "").trim(),
+      contentRoot: app.missionCreationPolicy.contentRoot,
       pieceCount,
       totalPieces: pieceCount,
       pieces: { total: pieceCount, recovered: 0, verified: 0 },

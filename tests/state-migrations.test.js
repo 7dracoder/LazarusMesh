@@ -55,7 +55,7 @@ test("legacy deployed missions migrate to explicit local actor and no-funds meta
 
   const migrated = migrateStateForRuntime(state, runtimeSystem());
   const mission = migrated.missions[0];
-  assert.equal(migrated.schemaVersion, 3);
+  assert.equal(migrated.schemaVersion, 4);
   assert.equal(mission.objective, "Reconstruct a known CC0 fixture, verify every piece, and model two complete replicas.");
   assert.equal(mission.statusLabel, "Fixture unavailable — no modeled replica");
   assert.equal(mission.principal.id, "principal_lazarus_demo");
@@ -180,7 +180,7 @@ test("schema-2 external Rain and Monad x402 evidence remains external under a lo
   const migrated = migrateStateForRuntime(state, runtimeSystem());
   const mission = migrated.missions[0];
 
-  assert.equal(migrated.schemaVersion, 3);
+  assert.equal(migrated.schemaVersion, 4);
   assert.equal(mission.rainCard.mode, "rain-sandbox");
   assert.equal(mission.rainCard.synthetic, false);
   assert.equal(mission.rainCard.fundsMoved, true);
@@ -198,5 +198,91 @@ test("schema-2 external Rain and Monad x402 evidence remains external under a lo
   assert.match(
     mission.events.find((event) => event.id === "actor_boundary_v2:mission_external_history").description,
     /unless an external connector is explicitly reported/,
+  );
+});
+
+function remoteRuntimeSystem(contentRoot = "a".repeat(64)) {
+  return {
+    negotiation: { liveMerchantApi: true, ready: true },
+    recovery: { networkedProviders: true },
+    actors: {
+      merchant: { id: "merchant_lazarus_operator" },
+      provider: { id: "provider_lazarus_operator" },
+      verifiers: { connected: false },
+    },
+    missionCreation: { contentRoot },
+    rain: { external: false },
+    financialExecution: { realFunds: false },
+  };
+}
+
+function remoteState(contentRoot = "a".repeat(64)) {
+  return {
+    schemaVersion: 3,
+    system: {
+      negotiation: { liveMerchantApi: true },
+      recovery: { networkedProviders: true },
+    },
+    missions: [{
+      id: "mission_remote",
+      contentRoot,
+      manifest: { contentRoot },
+      budget: { currency: "USD" },
+      provider: {
+        id: "provider_lazarus_operator",
+        actorMode: "external",
+        externalEndpoint: true,
+      },
+      negotiation: {
+        executionMode: "external-merchant-api",
+        allowedMerchantIds: ["merchant_lazarus_operator"],
+        offers: [],
+        rounds: [],
+      },
+      payments: [],
+      transactions: [],
+      events: [],
+    }],
+  };
+}
+
+test("runtime migration binds remote state to its exact mode, artifact, merchant, and provider", () => {
+  const state = remoteState();
+  migrateStateForRuntime(state, remoteRuntimeSystem());
+  assert.equal(state.schemaVersion, 4);
+  assert.deepEqual(state.runtimeBinding, {
+    version: 1,
+    merchantMode: "remote",
+    recoveryMode: "remote",
+    contentRoot: "a".repeat(64),
+    merchantId: "merchant_lazarus_operator",
+    providerId: "provider_lazarus_operator",
+  });
+});
+
+test("runtime migration rejects local state or a different manifest under remote adapters", () => {
+  const localState = remoteState();
+  localState.system.negotiation.liveMerchantApi = false;
+  localState.system.recovery.networkedProviders = false;
+  localState.missions[0].negotiation.executionMode = "local-simulation";
+  localState.missions[0].provider.actorMode = "simulated";
+  localState.missions[0].provider.externalEndpoint = false;
+  assert.throws(
+    () => migrateStateForRuntime(localState, remoteRuntimeSystem()),
+    (error) => error.code === "PERSISTED_STATE_RUNTIME_BINDING_MISMATCH",
+  );
+
+  assert.throws(
+    () => migrateStateForRuntime(remoteState("b".repeat(64)), remoteRuntimeSystem()),
+    (error) => error.code === "PERSISTED_STATE_RUNTIME_BINDING_MISMATCH",
+  );
+});
+
+test("current-schema state cannot omit its runtime binding marker", () => {
+  const state = remoteState();
+  state.schemaVersion = 4;
+  assert.throws(
+    () => migrateStateForRuntime(state, remoteRuntimeSystem()),
+    (error) => error.code === "PERSISTED_STATE_RUNTIME_BINDING_MISMATCH",
   );
 });

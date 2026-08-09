@@ -4,7 +4,8 @@
 
 Choose one truthful run profile:
 
-- **Public Production:** local Rain, local x402 buyer, seller disabled, no value moves.
+- **Remote merchant Production (recommended):** authenticated merchant bargaining and provider download; local Rain, local x402, local bounty, and no value or chain writes.
+- **Local Production:** bundled 24-piece fixture and Atlas fallback; all operations local.
 - **Protected branch Preview:** local Rain plus one Privy-backed test-USDC x402 discovery payment through the co-located durable seller. The full bounty and archive purchase remain local.
 - **Local Rain sandbox:** do not present yet. The prior key must be rotated and the collateral/contract value replaced with a valid provider-issued UUID.
 
@@ -18,13 +19,13 @@ For the protected Preview, verify before opening the app:
 6. Seller and Neon settlement storage are enabled; the state key is unique and begins with `preview-`.
 7. Reset and new-mission creation return the one-shot denial.
 
-Mission accounting supports USD, EUR, GBP, CAD, and AUD through fixed demo references, not live FX. Use USD for the timings below. x402 settlement remains test USDC regardless of the accounting currency.
+Before presenting the remote profile, open the [live Lazarus demo](https://lazarus-mesh-merchant-demo.vercel.app) and confirm that merchant health reports authenticated HTTPS, a pinned Ed25519 key, and a matching sponsor-pinned manifest. The separate [merchant operator console](https://lazarus-merchant.vercel.app) requires the private `OPERATOR_TOKEN` from that Vercel project's Production environment; never paste the server-to-server merchant API token into the browser. Core local accounting supports USD, EUR, GBP, CAD, and AUD through fixed demo references, not live FX. The deployed remote merchant accepts one configured currency at a time and is currently USD, so use USD for the timings below.
 
 ## 0:00–0:25 — The problem
 
 “This CC0 research dataset still has a valid cryptographic commitment but zero complete seeders. A content address proves identity; it does not guarantee availability.”
 
-Show `DEAD`, zero seeders, and 24 missing pieces.
+Show `DEAD`, zero seeders, and eight missing pieces in the remote profile (`24` in local mode).
 
 ## 0:25–0:50 — Mission and authority
 
@@ -37,27 +38,29 @@ Show the USD reference envelope:
 - 12.00 negotiation ceiling, 9.00 buyer target, and three-round maximum; and
 - one-time archival egress with no renewal, sharing, or exclusivity.
 
-Select **Run full recovery**. On the protected Preview, use only the preloaded bundled mission.
+Select **Run full recovery**. On the protected x402 Preview, use only the preloaded bundled mission. Do not combine that one-shot payment profile with remote merchant mode.
 
 ## 0:50–1:25 — Discovery and bargaining
 
-In Public Production, describe the x402 receipt as a local one-cent-reference simulation and say “no value moved.”
+In remote merchant Production, describe x402 as a local one-cent-reference simulation and say “no value moved.” Then open the separate merchant console and show that Lazarus created a real authenticated negotiation session.
 
 In the protected Preview, show the real 0.01 test-USDC settlement, payment ID, confirmed transaction hash, and explorer evidence. Explain:
 
 “A dedicated Privy server wallet signed only the approved Monad-testnet USDC authorization. A different wallet received it. The protected seller settled through the facilitator and Neon prevents a duplicate payment ID from charging again.”
 
-Open the separate local bargaining transcript:
+For the remote merchant profile, show the two-round transcript in both Lazarus and the merchant console:
 
 ```text
-Atlas asks       $12.00
+Merchant asks    $12.00
 Buyer offers      $9.00
-Atlas counters   $10.50
+Merchant counters $10.50
 Buyer offers      $9.75
-Atlas accepts     $9.75
+Merchant accepts  $9.75
 ```
 
-“x402 paid for availability intelligence; it did not bargain. Atlas is a deterministic merchant model. The binding quote saves 2.25, or 18.75%, and commits to merchant, artifact, amount, purpose, terms, session, and expiry.”
+“The independently deployed merchant bargained over authenticated HTTPS. Lazarus pinned its Ed25519 key, recomputed the canonical quote digest, and verified the signed 9.75 binding quote before policy accepted it. The result saves 2.25, or 18.75%.”
+
+Point out the console boundary: Lazarus includes the proposed bounty in the offer message, but the merchant currently does not persist it. The console therefore shows the negotiation session, counters, signed quote, and audit events but no bounty field. The provider reward is not the same thing as the merchant's 9.75 archive quote.
 
 ## 1:25–1:50 — Monad boundary
 
@@ -65,15 +68,15 @@ Show the 5.00 demo bounty and 2.00 simulated collateral requirement.
 
 Say explicitly:
 
-“Only discovery can settle on Monad testnet today. The recovery bounty, provider claim, attestations, and 70/90/100 releases use the local ledger in every mode. Their hash-shaped receipts are not explorer transactions.”
+“This remote-merchant run makes no Monad transaction. The offer message includes proposed bounty context, but the recovery bounty, provider claim, attestations, and 70/90/100 releases use the local ledger. Their hash-shaped receipts are not explorer transactions, and the merchant console does not persist or display them.”
 
 ## 1:50–2:25 — Controlled archive allocation
 
 In the current deployment, Rain stays local:
 
-“Lazarus creates one local card-like authority for the accepted 9.75 quote. The 9.00 unrelated merchant/category attempt is denied and costs nothing; only the exact Atlas allocation succeeds.”
+“Lazarus creates one local card-like authority for the signed 9.75 quote. The 9.00 unrelated merchant/category attempt is denied and costs nothing; only the exact quoted allocation succeeds. The merchant is not actually charged or paid.”
 
-For the USD run, policy usage is 9.76: 0.01 discovery plus 9.75 archive allocation. In Production both are simulated. In the protected Preview only the discovery cent settles in test USDC; the 9.75 archive allocation remains local.
+For the USD run, policy usage is 9.76: 0.01 discovery plus 9.75 archive allocation. In remote merchant Production both are simulated accounting, so the verified end-to-end run charged `$0.00` and made no chain write. In the separate protected x402 Preview only the discovery cent settles in test USDC; the 9.75 archive allocation remains local.
 
 If asked about Rain, answer:
 
@@ -81,9 +84,9 @@ If asked about Rain, answer:
 
 ## 2:25–3:15 — Recover and verify
 
-Watch all 24 pieces move from missing to recovered to verified. Show two passing verifier roles and compare expected versus reconstructed SHA-256.
+Watch all `8/8` remote pieces move from missing to recovered to verified. Show the pinned provider manifest, piece hashes, reconstructed SHA-256, and root match. Local fallback uses `24/24` pieces.
 
-“The byte verification is real and local. Provider networking and verifier independence are still simulated.”
+“The provider networking and byte transfer are real HTTPS operations. Lazarus bounds every response and verifies the live manifest against the sponsor-pinned copy, every piece hash, the total size, and the reconstructed artifact. The verifier roles themselves remain scripted and local.”
 
 ## 3:15–3:40 — Reward and network effect
 
@@ -98,7 +101,7 @@ State that reward release and seeders are local model state, not onchain bounty 
 
 ## 3:40–4:00 — Close
 
-“Lazarus Mesh separates autonomy from authority. The agent discovers and bargains, deterministic policy decides, Privy can sign only a narrow testnet envelope, x402 makes paid discovery machine-native, and Rain is ready for bounded sandbox card testing once valid rotated credentials arrive. Public Production remains safe and local-only; the protected Preview proves one capped onchain discovery payment without pretending the whole market is live.”
+“Lazarus Mesh separates autonomy from authority. The buyer bargains with a real merchant API, verifies its signed quote, and retrieves a sponsor-pinned artifact from the provider. Deterministic policy still decides what may happen. The remote run charges nothing; Privy/x402 testnet settlement is isolated to a different protected profile, and Rain stays unarmed until valid rotated credentials arrive.”
 
 Closing line:
 

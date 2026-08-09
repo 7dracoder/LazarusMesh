@@ -535,3 +535,32 @@ test('Rain sandbox returns stable errors for unreadable and malformed response b
     );
   });
 });
+
+test('Rain sandbox restores an expired card without granting it authority', async () => {
+  const rain = makeAdapter(async () => jsonResponse(scopedCardPayload()));
+  const created = await rain.createScopedCard(policy({ currency: 'USD' }));
+  rain.reset();
+
+  // A serverless request must be able to rehydrate a part-finished mission
+  // whose short quote expiry has already passed.
+  const restored = rain.restoreCard({
+    ...created,
+    expiresAt: new Date(FIXED_NOW.getTime() - 60_000).toISOString(),
+  });
+  assert.equal(restored.cardId, created.cardId);
+
+  // The restored card still authorizes nothing.
+  const decision = await rain.authorizePurchase(created.cardId, {
+    merchantId: created.allowedMerchantIds[0],
+    mcc: created.allowedMccs[0],
+    amountMinor: 975,
+    currency: 'USD',
+  });
+  assert.equal(decision.authorized, false);
+  assert.equal(decision.code, 'CARD_EXPIRED');
+  assert.equal(decision.remoteAttempted, false);
+
+  // And mission completion can still retire it.
+  const retired = await rain.retireCard(created.cardId);
+  assert.equal(retired.state, 'expiry_scheduled');
+});

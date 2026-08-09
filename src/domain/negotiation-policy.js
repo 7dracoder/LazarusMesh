@@ -197,7 +197,10 @@ function evaluateQuote({
 
   return result('QUOTE_OK', {
     amountMinor: quote.amountMinor,
-    savingsMinor: Math.max(0, (policy.initialAmountMinor || quote.amountMinor) - quote.amountMinor),
+    savingsMinor: Math.max(
+      0,
+      (policy.initialOfferAmountMinor || policy.initialAmountMinor || quote.amountMinor) - quote.amountMinor,
+    ),
   });
 }
 

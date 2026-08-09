@@ -41,6 +41,16 @@ test("live Monad buyer is allowed only on the explicitly armed protected preview
   assert.equal(policy.stateKey, "preview-x402-v1");
 });
 
+test("live x402 preview cannot be combined with a remote merchant artifact", () => {
+  assert.throws(
+    () => vercelRuntimePolicy(liveEnv({
+      MERCHANT_MODE: "remote",
+      LAZARUS_STATE_KEY: "merchant-preview-v1",
+    })),
+    /pinned local fixture/i,
+  );
+});
+
 test("production refuses live Monad even when every opt-in flag is present", () => {
   assert.throws(
     () => vercelRuntimePolicy(liveEnv({ VERCEL_ENV: "production", VERCEL_TARGET_ENV: "production" })),
@@ -95,6 +105,16 @@ test("public production keeps both x402 buyer and seller local-only", () => {
   assert.equal(policy.liveBuyerEnabled, false);
   assert.equal(policy.sellerEnabled, false);
   assert.equal(policy.stateKey, "primary");
+  const remoteMerchantPolicy = vercelRuntimePolicy({
+    ADAPTER_MODE: "local",
+    MONAD_EXECUTION_MODE: "local",
+    MERCHANT_MODE: "remote",
+    LAZARUS_STATE_KEY: "merchant-demo-production-v1",
+    VERCEL_ENV: "production",
+    X402_SELLER_ENABLED: "false",
+  });
+  assert.equal(remoteMerchantPolicy.merchantMode, "remote");
+  assert.equal(remoteMerchantPolicy.stateKey, "merchant-demo-production-v1");
   assert.throws(() => vercelRuntimePolicy({
     ADAPTER_MODE: "local",
     MONAD_EXECUTION_MODE: "local",
@@ -107,4 +127,61 @@ test("public production keeps both x402 buyer and seller local-only", () => {
     VERCEL_ENV: "preview",
     X402_SELLER_ENABLED: "true",
   }), /only with the armed buyer/i);
+});
+
+test("remote merchant production requires an explicit isolated state namespace", () => {
+  const base = {
+    ADAPTER_MODE: "local",
+    MONAD_EXECUTION_MODE: "local",
+    MERCHANT_MODE: "remote",
+    VERCEL_ENV: "production",
+    X402_SELLER_ENABLED: "false",
+  };
+  for (const stateKey of [undefined, "primary", "production-v1"]) {
+    assert.throws(
+      () => vercelRuntimePolicy({ ...base, ...(stateKey ? { LAZARUS_STATE_KEY: stateKey } : {}) }),
+      /isolated merchant-\*/i,
+    );
+  }
+  assert.equal(vercelRuntimePolicy({
+    ...base,
+    LAZARUS_STATE_KEY: "merchant-demo-production-v1",
+  }).stateKey, "merchant-demo-production-v1");
+});
+
+test("rain sandbox is permitted on Vercel with an isolated state namespace", () => {
+  const policy = vercelRuntimePolicy({
+    ADAPTER_MODE: "rain-sandbox",
+    MONAD_EXECUTION_MODE: "local",
+    MERCHANT_MODE: "remote",
+    VERCEL_ENV: "production",
+    X402_SELLER_ENABLED: "false",
+    LAZARUS_STATE_KEY: "merchant-rain-live-v1",
+  });
+  assert.equal(policy.adapterMode, "rain-sandbox");
+  assert.equal(policy.liveBuyerEnabled, false);
+  assert.equal(policy.sellerEnabled, false);
+  assert.equal(policy.stateKey, "merchant-rain-live-v1");
+});
+
+test("rain sandbox on Vercel refuses the default or absent state namespace", () => {
+  const base = {
+    ADAPTER_MODE: "rain-sandbox",
+    MONAD_EXECUTION_MODE: "local",
+    VERCEL_ENV: "production",
+    X402_SELLER_ENABLED: "false",
+  };
+  for (const stateKey of [undefined, "primary"]) {
+    assert.throws(
+      () => vercelRuntimePolicy({ ...base, ...(stateKey ? { LAZARUS_STATE_KEY: stateKey } : {}) }),
+      /isolated LAZARUS_STATE_KEY/i,
+    );
+  }
+});
+
+test("an unsupported adapter mode still fails closed on Vercel", () => {
+  assert.throws(() => vercelRuntimePolicy({
+    ADAPTER_MODE: "rain-production",
+    LAZARUS_STATE_KEY: "merchant-rain-live-v1",
+  }), /exactly local or rain-sandbox/i);
 });

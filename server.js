@@ -5,6 +5,7 @@ const { randomUUID } = require("node:crypto");
 const { JsonStore } = require("./src/store");
 const {
   loadEnvFile,
+  merchantRemoteConfig,
   monadNetworkConfig,
   monadReadiness,
   monadX402Config,
@@ -17,7 +18,9 @@ const { probeMonadNetwork } = require("./src/services/monad-network");
 const { LocalX402Adapter } = require("./src/services/x402-local");
 const { MonadX402Adapter } = require("./src/services/x402-monad");
 const { LocalNegotiationAdapter } = require("./src/services/negotiation-local");
+const { RemoteNegotiationAdapter } = require("./src/services/negotiation-remote");
 const { LocalRecoveryAdapter } = require("./src/services/recovery-local");
+const { RemoteRecoveryAdapter } = require("./src/services/recovery-remote");
 const {
   LIVE_PREVIEW_MISSION_LIFETIME_MS,
   createDefaultState,
@@ -219,6 +222,13 @@ function assertSameOriginMutation(request, { requireOrigin = false } = {}) {
   }
 }
 
+function assertApplicationRequest(request, { allowRemoteHost = false } = {}) {
+  assertRequestHost(request, { allowRemoteHost });
+  if (request.method === "POST") {
+    assertSameOriginMutation(request, { requireOrigin: allowRemoteHost });
+  }
+}
+
 function createApplication({
   adapterMode = "local",
   env = {},
@@ -246,6 +256,10 @@ function createApplication({
   }
   if (x402FetchImpl !== null && typeof x402FetchImpl !== "function") {
     throw new Error("The x402 fetch implementation must be a function.");
+  }
+  const remoteMerchantConfig = merchantRemoteConfig(env);
+  if (remoteMerchantConfig && configuredMonadExecution === "x402-testnet") {
+    throw new Error("Remote merchant mode cannot share the current pinned local x402 testnet seller.");
   }
   let store;
   const persistPendingX402Payment = async (pending) => {
@@ -278,16 +292,24 @@ function createApplication({
     ? new RainSandboxAdapter(rainSandboxConfig(env))
     : new LocalRainAdapter());
   const monad = adapterOverrides.monad || new LocalMonadAdapter();
+  const negotiation = adapterOverrides.negotiation || (remoteMerchantConfig
+    ? new RemoteNegotiationAdapter(remoteMerchantConfig)
+    : new LocalNegotiationAdapter());
+  const recovery = adapterOverrides.recovery || (remoteMerchantConfig
+    ? new RemoteRecoveryAdapter(remoteMerchantConfig)
+    : new LocalRecoveryAdapter());
+  const providerProfile = recovery.provider || negotiation.provider || {
+    providerId: "provider_atlas_archive",
+    providerName: "Atlas Archive Node",
+  };
   const x402 = adapterOverrides.x402 || (configuredMonadExecution === "x402-testnet"
     ? new MonadX402Adapter({
       ...monadX402Config(env),
       ...(x402FetchImpl ? { fetchImpl: x402FetchImpl } : {}),
       persistPendingPayment: persistPendingX402Payment,
     })
-    : new LocalX402Adapter());
-  const negotiation = adapterOverrides.negotiation || new LocalNegotiationAdapter();
-  const recovery = adapterOverrides.recovery || new LocalRecoveryAdapter();
-  const creationManifest = recovery.buildManifest(MISSION_CREATION_POLICY.pieceCount);
+    : new LocalX402Adapter({ providerId: providerProfile.providerId }));
+  const creationManifest = recovery.buildManifest();
   const clients = new Set();
   const readiness = monadReadiness(env);
   const x402Live = x402.mode === "monad-testnet" && x402.liveSettlementEnabled === true;
@@ -298,13 +320,23 @@ function createApplication({
   const merchantSignedQuotes = liveMerchantApi && negotiation.merchantSignedQuotes === true;
   const merchantReady = liveMerchantApi && merchantAuthenticated && merchantSignedQuotes;
   const networkedProviders = recovery.networkedProviders === true;
+  const persistentReseeding = recovery.persistentReseeding === true;
   const externalVerifierNetwork = false;
   const merchantProfile = negotiation.merchant || {
     merchantId: "merchant_atlas_archive",
     merchantName: "Atlas Archive Cloud",
   };
+  const supportedCurrencies = MISSION_CREATION_POLICY.currencyConfig.supported
+    .map((item) => item.code)
+    .filter((currency) => (
+      (!Array.isArray(negotiation.supportedCurrencies) || negotiation.supportedCurrencies.includes(currency))
+      && (!Array.isArray(recovery.supportedCurrencies) || recovery.supportedCurrencies.includes(currency))
+    ));
+  if (!supportedCurrencies.length) throw new Error("Merchant and recovery adapters share no supported currency.");
   const system = {
-    mode: adapterMode === "rain-sandbox" || x402Live ? "hybrid-sandbox" : "local",
+    mode: liveMerchantApi || networkedProviders
+      ? "hybrid-external-demo"
+      : adapterMode === "rain-sandbox" || x402Live ? "hybrid-sandbox" : "local",
     rain: {
       mode: rain.mode || (adapterMode === "rain-sandbox" ? "rain-sandbox" : "local"),
       external: adapterMode === "rain-sandbox",
@@ -335,6 +367,7 @@ function createApplication({
       merchantAuthenticated,
       merchantSignedQuotes,
       ready: merchantReady,
+      bountyMessaging: negotiation.bountyMessaging === true,
       communication: merchantReady
         ? "authenticated-https"
         : liveMerchantApi
@@ -344,7 +377,7 @@ function createApplication({
     recovery: {
       mode: networkedProviders ? "external-provider-api" : "verified-local-fixture",
       networkedProviders,
-      persistentReseeding: false,
+      persistentReseeding,
     },
     actors: {
       mode: liveMerchantApi || networkedProviders ? "hybrid" : "local-simulation",
@@ -371,10 +404,13 @@ function createApplication({
         authenticated: merchantAuthenticated,
         signedQuotes: merchantSignedQuotes,
         externalEndpoint: liveMerchantApi,
+        ...(liveMerchantApi && negotiation.baseUrl
+          ? { consoleUrl: negotiation.baseUrl.href }
+          : {}),
       },
       provider: {
-        id: "provider_atlas_archive",
-        name: "Atlas Archive Node",
+        id: providerProfile.providerId,
+        name: providerProfile.providerName,
         role: "fulfillment-provider",
         kind: networkedProviders ? "external-provider-api" : "bundled-fixture-provider",
         simulated: !networkedProviders,
@@ -413,13 +449,15 @@ function createApplication({
     },
     missionCreation: {
       ...MISSION_CREATION_POLICY,
+      sourceMode: networkedProviders ? "sponsor-pinned-remote-provider-manifest" : MISSION_CREATION_POLICY.sourceMode,
       currencyRateSet: RATE_SET_ID,
-      supportedCurrencies: MISSION_CREATION_POLICY.currencyConfig.supported.map((item) => item.code),
+      supportedCurrencies,
       currencyLimits: Object.fromEntries(
-        MISSION_CREATION_POLICY.currencyConfig.supported.map((item) => [item.code, missionCurrencyLimits(item.code)]),
+        supportedCurrencies.map((currency) => [currency, missionCurrencyLimits(currency)]),
       ),
       adapterCurrencies: {
         local: MISSION_CREATION_POLICY.currencyConfig.supported.map((item) => item.code),
+        merchantProvider: supportedCurrencies,
         rainSandbox: ["USD"],
         monadX402Settlement: ["USDC"],
       },
@@ -436,7 +474,7 @@ function createApplication({
       ...(!readiness.resourceConfigured ? ["x402_resource_url"] : []),
       ...(!merchantReady ? ["live_merchant_negotiation"] : []),
       ...(!networkedProviders ? ["network_recovery_provider"] : []),
-      "persistent_reseeding",
+      ...(!persistentReseeding ? ["persistent_reseeding"] : []),
     ],
     orchestrator: { status: "ready" },
     paymentRails: {
@@ -463,6 +501,7 @@ function createApplication({
 
   const stateFactory = () => createDefaultState(recovery, {
     system,
+    negotiation,
     ...(livePreviewOneShot ? { missionLifetimeMs: LIVE_PREVIEW_MISSION_LIFETIME_MS } : {}),
   });
   store = providedStore || new JsonStore(dataFile, stateFactory);
@@ -516,23 +555,43 @@ function createApplication({
     if (x402Seller && await x402Seller.handle(request, response, url)) return;
     if (request.method === "POST") assertSameOriginMutation(request, { requireOrigin: allowRemoteHost });
     if (request.method === "GET" && url.pathname === "/api/health") {
-      let rainHealth = { ok: true, mode: rain.mode || "local", authenticated: false };
-      if (typeof rain.health === "function") {
+      const safeProbe = async (adapter, fallback, failureCode) => {
+        if (typeof adapter.health !== "function") return fallback;
         try {
-          rainHealth = await rain.health();
+          return await adapter.health();
         } catch (error) {
-          rainHealth = {
+          return {
             ok: false,
-            mode: rain.mode || "rain-sandbox",
-            error: { code: error.code || "RAIN_HEALTH_CHECK_FAILED" },
+            mode: adapter.mode || fallback.mode,
+            error: { code: error.code || failureCode },
           };
         }
-      }
+      };
       const probeConfigured = readiness.rpcConfigured && readiness.facilitatorConfigured;
-      const monadNetwork = probeConfigured
-        ? await runMonadProbe()
-        : { ok: false, configured: false, caip2Network: readiness.network };
-      const ok = rainHealth.ok === true && (!probeConfigured || monadNetwork.ok === true);
+      const [rainHealth, negotiationHealth, recoveryHealth, monadNetwork] = await Promise.all([
+        safeProbe(
+          rain,
+          { ok: true, mode: rain.mode || "local", authenticated: false },
+          "RAIN_HEALTH_CHECK_FAILED",
+        ),
+        safeProbe(
+          negotiation,
+          { ok: true, ...system.negotiation },
+          "MERCHANT_HEALTH_CHECK_FAILED",
+        ),
+        safeProbe(
+          recovery,
+          { ok: true, ...system.recovery },
+          "RECOVERY_HEALTH_CHECK_FAILED",
+        ),
+        probeConfigured
+          ? runMonadProbe()
+          : Promise.resolve({ ok: false, configured: false, caip2Network: readiness.network }),
+      ]);
+      const ok = rainHealth.ok === true
+        && negotiationHealth.ok === true
+        && recoveryHealth.ok === true
+        && (!probeConfigured || monadNetwork.ok === true);
       return sendJson(response, ok ? 200 : 503, {
         ok,
         name: "Lazarus Mesh",
@@ -557,8 +616,8 @@ function createApplication({
             resourceConfigured: readiness.resourceConfigured,
             facilitatorConfigured: readiness.facilitatorConfigured,
           },
-          negotiation: { ...system.negotiation },
-          recovery: { ...system.recovery },
+          negotiation: negotiationHealth,
+          recovery: recoveryHealth,
         },
       });
     }
@@ -620,10 +679,10 @@ function createApplication({
       }
       const title = typeof body.title === "string" ? body.title.trim().slice(0, 100) : "Restore authorized dataset";
       const currency = normalizeCurrency(body.currency);
-      if (!currency) {
+      if (!currency || !system.missionCreation.supportedCurrencies.includes(currency)) {
         return sendApiProblem(response, 422, {
           code: "CURRENCY_NOT_SUPPORTED",
-          message: "Choose one supported mission currency: USD, EUR, GBP, CAD, or AUD.",
+          message: `Choose one currency supported by this runtime: ${system.missionCreation.supportedCurrencies.join(", ")}.`,
           field: "currency",
           details: { supportedCurrencies: system.missionCreation.supportedCurrencies },
         });
@@ -696,7 +755,9 @@ function createApplication({
       if (requestedRoot && requestedRoot !== creationManifest.contentRoot) {
         return sendApiProblem(response, 422, {
           code: "CONTENT_ROOT_NOT_AVAILABLE",
-          message: "This runtime can create missions only for the verified bundled fixture. Configure a network recovery provider before using another content root.",
+          message: networkedProviders
+            ? "This runtime accepts only the sponsor-pinned remote provider artifact."
+            : "This runtime can create missions only for the verified bundled fixture. Configure a network recovery provider before using another content root.",
           field: "contentRoot",
           details: { supportedContentRoot: creationManifest.contentRoot },
         });
@@ -706,7 +767,7 @@ function createApplication({
       if (requestedPieceCount !== undefined && requestedPieceCount !== creationManifest.totalPieces) {
         return sendApiProblem(response, 422, {
           code: "PIECE_COUNT_NOT_SUPPORTED",
-          message: `The verified bundled manifest contains exactly ${creationManifest.totalPieces} pieces.`,
+          message: `The verified ${networkedProviders ? "remote" : "bundled"} manifest contains exactly ${creationManifest.totalPieces} pieces.`,
           field: "pieceCount",
           details: { supportedPieceCount: creationManifest.totalPieces },
         });
@@ -715,7 +776,7 @@ function createApplication({
       if (body.license !== undefined && body.license !== creationManifest.license) {
         return sendApiProblem(response, 422, {
           code: "LICENSE_NOT_SUPPORTED",
-          message: `The bundled artifact is verified under ${creationManifest.license}.`,
+          message: `The ${networkedProviders ? "remote" : "bundled"} artifact is verified under ${creationManifest.license}.`,
           field: "license",
           details: { supportedLicense: creationManifest.license },
         });
@@ -723,6 +784,7 @@ function createApplication({
 
       const mission = createMission({
         recovery,
+        negotiation,
         id: `mission_${randomUUID().replaceAll("-", "").slice(0, 16)}`,
         title: title || "Restore authorized dataset",
         rewardMinor,
@@ -796,7 +858,7 @@ function createApplication({
     const requestId = randomUUID();
     response.setHeader("X-Request-Id", requestId);
     try {
-      assertRequestHost(request, { allowRemoteHost });
+      assertApplicationRequest(request, { allowRemoteHost });
       const url = new URL(request.url, `http://${request.headers.host || "localhost"}`);
       if (url.pathname.startsWith("/api/")) await routeApi(request, response, url);
       else if (request.method === "GET" || request.method === "HEAD") serveStatic(request, response, url);
@@ -861,4 +923,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { createApplication };
+module.exports = { assertApplicationRequest, createApplication };

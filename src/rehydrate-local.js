@@ -4,34 +4,143 @@ function integer(value, fallback = 0) {
   return Number.isSafeInteger(value) ? value : fallback;
 }
 
+const RECOVERY_STATE_LAST_REQUIRED_STEP = 6;
+
+function persistedStateError(code, message) {
+  const error = new Error(message);
+  error.code = code;
+  return error;
+}
+
+function canonicalStringify(value) {
+  if (value === null || typeof value !== "object") return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(canonicalStringify).join(",")}]`;
+  const keys = Object.keys(value).sort();
+  return `{${keys.map((key) => `${JSON.stringify(key)}:${canonicalStringify(value[key])}`).join(",")}}`;
+}
+
+function assertManifestMatches(mission, expectedManifest) {
+  const stored = mission?.manifest;
+  if (!stored || typeof stored !== "object" || Array.isArray(stored)) {
+    throw persistedStateError(
+      "PERSISTED_STATE_MANIFEST_MISMATCH",
+      "Stored mission is missing its pinned recovery manifest.",
+    );
+  }
+  const fields = ["name", "license", "totalBytes", "totalPieces", "contentSha256", "contentRoot"];
+  const mismatch = fields.some((field) => (
+    expectedManifest[field] !== undefined && stored[field] !== expectedManifest[field]
+  ));
+  const piecesMismatch = Array.isArray(expectedManifest.pieces)
+    && canonicalStringify(stored.pieces) !== canonicalStringify(expectedManifest.pieces);
+  if (mismatch || piecesMismatch || expectedManifest.contentRoot !== mission.contentRoot) {
+    throw persistedStateError(
+      "PERSISTED_STATE_MANIFEST_MISMATCH",
+      "Stored mission manifest does not match the recovery adapter's pinned artifact.",
+    );
+  }
+}
+
+function assertRecoveryModeMatches(mission, recovery) {
+  const remote = recovery.networkedProviders === true;
+  const storedExternal = mission.provider?.actorMode === "external"
+    || mission.provider?.externalEndpoint === true;
+  const storedLocal = mission.provider?.actorMode === "simulated"
+    || mission.provider?.externalEndpoint === false;
+  if ((remote && storedLocal) || (!remote && storedExternal)) {
+    throw persistedStateError(
+      "PERSISTED_STATE_RECOVERY_MODE_MISMATCH",
+      "Stored mission recovery mode does not match the configured recovery adapter.",
+    );
+  }
+  if (
+    remote
+    && recovery.provider?.providerId
+    && mission.provider?.id !== recovery.provider.providerId
+  ) {
+    throw persistedStateError(
+      "PERSISTED_STATE_RECOVERY_MODE_MISMATCH",
+      "Stored mission provider does not match the configured remote recovery provider.",
+    );
+  }
+}
+
+function shouldRestoreRecoverySession(mission, {
+  targetMissionId,
+  restoreTargetRecovery,
+  scoped,
+}) {
+  if (scoped && mission.id !== targetMissionId) return false;
+  if (scoped && restoreTargetRecovery !== true) return false;
+  return integer(mission.stepIndex) <= RECOVERY_STATE_LAST_REQUIRED_STEP;
+}
+
+function restoreNegotiationBindings(state, negotiation) {
+  if (negotiation.liveMerchantApi !== true) return;
+  if (typeof negotiation.bindSession !== "function") {
+    throw persistedStateError(
+      "PERSISTED_STATE_NEGOTIATION_RECONCILIATION_UNAVAILABLE",
+      "The remote negotiation adapter cannot restore persisted mission bindings.",
+    );
+  }
+  for (const mission of state.missions || []) {
+    const storedSessionId = mission.negotiation?.sessionId;
+    const quoteSessionId = mission.negotiation?.acceptedQuote?.sessionId;
+    if (
+      storedSessionId !== undefined
+      && storedSessionId !== null
+      && quoteSessionId !== undefined
+      && quoteSessionId !== null
+      && storedSessionId !== quoteSessionId
+    ) {
+      throw persistedStateError(
+        "PERSISTED_STATE_NEGOTIATION_SESSION_MISMATCH",
+        "Stored negotiation and quote session identifiers do not match.",
+      );
+    }
+    const sessionId = storedSessionId || quoteSessionId;
+    if (sessionId) negotiation.bindSession(mission.id, sessionId, mission.deadline);
+  }
+}
+
 /**
- * The demo adapters deliberately keep their ledgers in memory. On a Vercel
- * request, rebuild those deterministic ledgers from the durable public audit
- * state before continuing a step. This is only valid for local adapters; live
- * payment providers require their own durable operation/reconciliation layer.
+ * Rebuild request-local adapter state from the durable public audit snapshot.
+ * Local adapters reconstruct deterministically. A configured remote recovery
+ * adapter re-fetches only the already-recorded piece prefix and verifies it
+ * against the sponsor-pinned manifest before a mutation continues. Live
+ * payment providers still require their own durable reconciliation layer.
  */
-async function rehydrateLocalAdapters(state, adapters) {
+async function rehydrateLocalAdapters(state, adapters, options = {}) {
   const { rain, monad, x402, negotiation, recovery } = adapters;
+  const scoped = Object.hasOwn(options, "targetMissionId");
+  const targetMissionId = scoped ? options.targetMissionId : null;
+  const restoreTargetRecovery = scoped ? options.restoreTargetRecovery !== false : true;
+  if (scoped && (typeof targetMissionId !== "string" || !targetMissionId)) {
+    throw new TypeError("targetMissionId must be a non-empty string when rehydration is scoped.");
+  }
   await Promise.all([rain.reset(), monad.reset(), x402.reset(), negotiation.reset(), recovery.reset()]);
+  restoreNegotiationBindings(state, negotiation);
 
   for (const mission of state.missions || []) {
     const manifest = recovery.buildManifest(integer(mission.manifest?.totalPieces, 24));
-    if (manifest.contentRoot !== mission.contentRoot) {
-      const error = new Error("Stored mission content root does not match the verified fixture.");
-      error.code = "PERSISTED_STATE_MANIFEST_MISMATCH";
-      throw error;
-    }
-    recovery.start(mission.id, manifest);
+    assertManifestMatches(mission, manifest);
+    assertRecoveryModeMatches(mission, recovery);
     const recovered = integer(mission.pieces?.recovered);
     const verified = integer(mission.pieces?.verified);
-    if (recovered > 0) recovery.recoverThrough(mission.id, recovered);
-    if (verified > 0) {
-      if (verified !== recovered) {
-        const error = new Error("Stored recovery state has an invalid verification count.");
-        error.code = "PERSISTED_STATE_RECOVERY_MISMATCH";
-        throw error;
-      }
-      recovery.verifyAll(mission.id);
+    if (recovered < 0 || verified < 0 || verified > recovered || recovered > manifest.totalPieces) {
+      throw persistedStateError(
+        "PERSISTED_STATE_RECOVERY_MISMATCH",
+        "Stored recovery state has invalid recovered or verified counts.",
+      );
+    }
+    if (shouldRestoreRecoverySession(mission, {
+      targetMissionId,
+      restoreTargetRecovery,
+      scoped,
+    })) {
+      await recovery.start(mission.id, manifest);
+      if (recovered > 0) await recovery.recoverThrough(mission.id, recovered);
+      if (verified > 0) await recovery.verifyAll(mission.id);
     }
 
     const x402Receipts = (mission.payments || []).filter((payment) => (

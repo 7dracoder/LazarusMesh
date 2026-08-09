@@ -6,6 +6,16 @@ const { currencyInfo, fromAccountingMinorUp } = require("./domain/currency");
 
 const STEP_COUNT = 9;
 
+function recoveryMilestones(mission) {
+  const total = mission?.manifest?.totalPieces;
+  if (!Number.isSafeInteger(total) || total < 1) throw new Error("MISSION_PIECE_COUNT_INVALID");
+  return {
+    first: Math.max(1, Math.ceil(total / 3)),
+    second: Math.max(1, Math.ceil((total * 2) / 3)),
+    total,
+  };
+}
+
 function formatMinor(amountMinor, currency = "USD") {
   const info = currencyInfo(currency) || currencyInfo("USD");
   return new Intl.NumberFormat("en-US", {
@@ -220,6 +230,16 @@ class LazarusOrchestrator {
       missionId: mission.id,
       contentRoot: mission.contentRoot,
       providerId: mission.provider.id,
+      bounty: {
+        status: "proposed-local-ledger",
+        rewardMinor: mission.budget.rewardMinor,
+        stakeMinor: mission.budget.stakeMinor,
+        currency: mission.budget.currency,
+        deadline: mission.deadline,
+        settlementNetwork: mission.budget.railSettlement?.monad?.network || "eip155:10143",
+        settlementAsset: mission.budget.railSettlement?.monad?.asset || "USDC",
+        onchain: false,
+      },
       requirements: {
         maximumRounds: policy.maximumRounds,
         maximumAmountMinor: policy.maximumAmountMinor,
@@ -229,6 +249,7 @@ class LazarusOrchestrator {
     });
     const initialOffer = sessionStart.offers[0];
     if (!initialOffer) throw new Error("Merchant negotiation returned no offers.");
+    const initialOfferAmountMinor = initialOffer.amountMinor;
 
     let response = await this.negotiation.sendCounterOffer({
       sessionId: sessionStart.sessionId,
@@ -279,7 +300,7 @@ class LazarusOrchestrator {
     }
     const decision = evaluateQuote({
       mission,
-      policy,
+      policy: { ...policy, initialOfferAmountMinor },
       quote,
       expectedSessionId: sessionStart.sessionId,
       roundCount: response.session.rounds.length,
@@ -291,17 +312,18 @@ class LazarusOrchestrator {
       throw error;
     }
 
-    const savingsMinor = Math.max(0, policy.initialAmountMinor - quote.amountMinor);
+    const savingsMinor = Math.max(0, initialOfferAmountMinor - quote.amountMinor);
     Object.assign(policy, {
       status: "quote_accepted",
       sessionId: sessionStart.sessionId,
       offers: response.session.offers,
       rounds: response.session.rounds,
       acceptedQuote: quote,
+      initialOfferAmountMinor,
       decision,
       savingsMinor,
-      savingsBps: policy.initialAmountMinor > 0
-        ? Math.round((savingsMinor * 10_000) / policy.initialAmountMinor)
+      savingsBps: initialOfferAmountMinor > 0
+        ? Math.round((savingsMinor * 10_000) / initialOfferAmountMinor)
         : 0,
       completedAt: response.session.completedAt,
     });
@@ -378,8 +400,10 @@ class LazarusOrchestrator {
         "x402",
         this.x402.mode === "local" ? "Availability handshake simulated" : "Availability intelligence purchased",
         this.x402.mode === "local"
-          ? "The local HTTP 402 demo handshake selected the simulated Atlas fixture provider. No external provider was contacted and no token was signed or transferred."
-          : "Agent completed an HTTP 402 availability-discovery handshake and found Atlas Archive Node; bargaining happened in a separate quote session.",
+          ? this.recovery.networkedProviders === true
+            ? `The local HTTP 402 discovery model selected ${mission.provider.name}; the provider itself is contacted later over authenticated HTTPS. No token was signed or transferred.`
+            : "The local HTTP 402 demo handshake selected the simulated Atlas fixture provider. No external provider was contacted and no token was signed or transferred."
+          : `Agent completed an HTTP 402 availability-discovery handshake and selected ${mission.provider.name}; bargaining happened in a separate quote session.`,
       );
       return;
     }
@@ -614,45 +638,50 @@ class LazarusOrchestrator {
         "Monad",
         this.monad.mode === "local" ? "Demo provider claim recorded" : "Provider claimed bounty",
         this.monad.mode === "local"
-          ? "The simulated Atlas fixture provider was assigned in the local ledger; no provider endpoint was contacted and no collateral or token moved."
-          : "Atlas Archive Node posted collateral and committed to recovery.",
+          ? this.recovery.networkedProviders === true
+            ? `${mission.provider.name} was assigned in the local bounty ledger. Its HTTPS artifact endpoint is real, but no collateral or reward token moved.`
+            : "The simulated Atlas fixture provider was assigned in the local ledger; no provider endpoint was contacted and no collateral or token moved."
+          : `${mission.provider.name} posted collateral and committed to recovery.`,
       );
       return;
     }
 
     if (step === 4) {
-      mission.pieces = await this.recovery.recoverThrough(mission.id, 8);
+      const targets = recoveryMilestones(mission);
+      mission.pieces = await this.recovery.recoverThrough(mission.id, targets.first);
       mission.status = "RECOVERING";
-      mission.statusLabel = "Recovering pieces — 8 of 24";
+      mission.statusLabel = `Recovering pieces — ${targets.first} of ${targets.total}`;
       mission.availability = 34;
       this.addEvent(
         mission,
         this.recovery.mode === "local" ? "Local recovery fixture" : "Recovery provider",
         "First pieces recovered",
         this.recovery.mode === "local"
-          ? "8 cryptographically addressed pieces loaded from the bundled CC0 fixture; no external provider transferred data."
-          : "8 cryptographically addressed pieces received from the recovery provider.",
+          ? `${targets.first} cryptographically addressed pieces loaded from the bundled CC0 fixture; no external provider transferred data.`
+          : `${targets.first} of ${targets.total} cryptographically addressed pieces received from ${mission.provider.name}.`,
       );
       return;
     }
 
     if (step === 5) {
-      mission.pieces = await this.recovery.recoverThrough(mission.id, 16);
-      mission.statusLabel = "Recovering pieces — 16 of 24";
+      const targets = recoveryMilestones(mission);
+      mission.pieces = await this.recovery.recoverThrough(mission.id, targets.second);
+      mission.statusLabel = `Recovering pieces — ${targets.second} of ${targets.total}`;
       mission.availability = 58;
       this.addEvent(
         mission,
         this.recovery.mode === "local" ? "Local recovery fixture" : "Recovery provider",
         "Recovery passed halfway",
         this.recovery.mode === "local"
-          ? "16 of 24 bundled fixture pieces loaded; each piece hash matches the manifest."
-          : "16 of 24 pieces received; each piece hash matches the manifest.",
+          ? `${targets.second} of ${targets.total} bundled fixture pieces loaded; each piece hash matches the manifest.`
+          : `${targets.second} of ${targets.total} pieces received from ${mission.provider.name}; verification remains bound to the pinned manifest.`,
       );
       return;
     }
 
     if (step === 6) {
-      mission.pieces = await this.recovery.recoverThrough(mission.id, 24);
+      const targets = recoveryMilestones(mission);
+      mission.pieces = await this.recovery.recoverThrough(mission.id, targets.total);
       mission.pieces = await this.recovery.verifyAll(mission.id);
       this.transition(mission, "VERIFYING", "Verifier quorum reconstructing artifact");
       mission.availability = 82;
@@ -710,17 +739,19 @@ class LazarusOrchestrator {
       this.transition(
         mission,
         "RESEEDED",
-        this.recovery.mode === "local" ? "Demo modeled two local replicas" : "Restored to two independent seeders",
+        this.recovery.persistentReseeding === true
+          ? "Restored to two independent seeders"
+          : "Recovery verified — two replicas modeled",
       );
       mission.availability = 100;
       this.addChainTransaction(mission, release);
       this.addEvent(
         mission,
         "Recovery network",
-        this.recovery.mode === "local" ? "Demo replicas modeled" : "Artifact resurrected",
-        this.monad.mode === "local"
-          ? "The demo modeled two complete replicas and recorded the retention milestone locally; no external seeding network was contacted."
-          : "Availability changed from zero to two complete seeders; retention tranche released.",
+        this.recovery.persistentReseeding === true ? "Artifact resurrected" : "Demo replicas modeled",
+        this.recovery.persistentReseeding === true
+          ? "Availability changed from zero to two complete seeders; the retention milestone was recorded."
+          : "Two complete replicas were modeled after verified recovery; no persistent or independent seeding process was contacted.",
       );
       return;
     }
@@ -749,9 +780,11 @@ class LazarusOrchestrator {
         mission,
         "Lazarus Mesh",
         "Mission completed",
-        this.monad.mode === "local"
-          ? "The bundled-fixture recovery simulation completed. Demo allocations, scripted proofs, and local receipts reconciled with $0.00 charged."
-          : "Dead data is live again. Payment, proof, and recovery receipts reconciled.",
+        this.monad.mode === "local" && this.recovery.networkedProviders === true
+          ? "Authenticated merchant negotiation and remote artifact recovery completed. The bounty, card allocation, verifier quorum, and reseeding receipts remain local demo records with $0.00 charged."
+          : this.monad.mode === "local"
+            ? "The bundled-fixture recovery simulation completed. Demo allocations, scripted proofs, and local receipts reconciled with $0.00 charged."
+            : "Dead data is live again. Payment, proof, and recovery receipts reconciled.",
       );
     }
   }
