@@ -12,7 +12,10 @@
     "check": "node --check server.js && node --test"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=20 <23"
   },
-  "license": "MIT"
+  "license": "MIT",
+  "dependencies": {
+    "@neondatabase/serverless": "^1.1.0"
+  }
 }

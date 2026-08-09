@@ -127,6 +127,31 @@ class LocalRainAdapter {
     const card = this.cards.get(cardId);
     return card ? structuredClone(card) : null;
   }
+
+  restoreCard(card) {
+    if (!card || typeof card.cardId !== "string" || !card.cardId) {
+      throw new RainPolicyError("INVALID_RESTORED_CARD", "Stored card data is invalid.");
+    }
+    if (!isNonemptyStringArray(card.allowedMerchantIds) || !isNonemptyStringArray(card.allowedMccs)) {
+      throw new RainPolicyError("INVALID_RESTORED_CARD", "Stored card scope is invalid.");
+    }
+    if (!Number.isSafeInteger(card.maximumAmountMinor) || card.maximumAmountMinor <= 0) {
+      throw new RainPolicyError("INVALID_RESTORED_CARD", "Stored card limit is invalid.");
+    }
+    if (!Number.isSafeInteger(card.maxTransactions) || card.maxTransactions <= 0) {
+      throw new RainPolicyError("INVALID_RESTORED_CARD", "Stored transaction count limit is invalid.");
+    }
+    this.cards.set(card.cardId, structuredClone({
+      ...card,
+      allowedMerchantIds: Object.freeze([...card.allowedMerchantIds]),
+      allowedMccs: Object.freeze([...card.allowedMccs]),
+      transactionCount: Math.min(
+        card.maxTransactions,
+        Math.max(0, Number.isSafeInteger(card.transactionCount) ? card.transactionCount : 0),
+      ),
+    }));
+    return this.getCard(card.cardId);
+  }
 }
 
 module.exports = { LocalRainAdapter, RainPolicyError };

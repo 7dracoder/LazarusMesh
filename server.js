@@ -129,7 +129,20 @@ function assertLoopbackHost(request) {
   }
 }
 
-function assertLocalMutation(request) {
+function assertRequestHost(request, { allowRemoteHost = false } = {}) {
+  if (!allowRemoteHost) return assertLoopbackHost(request);
+  const hostHeader = String(request.headers.host || "");
+  try {
+    const hostname = new URL(`https://${hostHeader}`).hostname;
+    if (!hostname) throw new Error("Missing host.");
+  } catch {
+    const error = new Error("Invalid request host.");
+    error.statusCode = 403;
+    throw error;
+  }
+}
+
+function assertSameOriginMutation(request, { requireOrigin = false } = {}) {
   const hostHeader = String(request.headers.host || "");
   const fetchSite = request.headers["sec-fetch-site"];
   if (fetchSite === "cross-site") {
@@ -138,6 +151,11 @@ function assertLocalMutation(request) {
     throw error;
   }
   const origin = request.headers.origin;
+  if (requireOrigin && !origin) {
+    const error = new Error("A same-origin browser request is required.");
+    error.statusCode = 403;
+    throw error;
+  }
   if (origin) {
     let originHost;
     try {
@@ -160,6 +178,11 @@ function createApplication({
   env = {},
   adapterOverrides = {},
   dataFile = DATA_FILE,
+  store: providedStore,
+  resetStateOnStart = true,
+  allowRemoteHost = false,
+  enableEventStream = true,
+  runtime = "local",
 } = {}) {
   if (!["local", "rain-sandbox"].includes(adapterMode)) {
     throw new Error(`Unsupported ADAPTER_MODE: ${adapterMode}`);
@@ -207,6 +230,12 @@ function createApplication({
       networkedProviders: false,
       persistentReseeding: false,
     },
+    deployment: {
+      runtime,
+      stateStore: providedStore ? "managed-postgres" : "local-json",
+      eventTransport: enableEventStream ? "sse" : "polling",
+      publicDemo: allowRemoteHost,
+    },
     missionCreation: {
       ...MISSION_CREATION_POLICY,
       manifestName: creationManifest.name,
@@ -235,7 +264,7 @@ function createApplication({
   };
 
   const stateFactory = () => createDefaultState(recovery, { system });
-  const store = new JsonStore(dataFile, stateFactory);
+  const store = providedStore || new JsonStore(dataFile, stateFactory);
   const previousState = store.get();
   if (adapterMode === "rain-sandbox") {
     const unresolvedAuthority = previousState.missions?.find((mission) => (
@@ -249,9 +278,10 @@ function createApplication({
       throw error;
     }
   }
-  // Adapter ledgers are intentionally ephemeral. Always start one coherent
-  // local session instead of loading JSON without rehydrating those ledgers.
-  store.replace(stateFactory());
+  // Local CLI sessions intentionally start fresh because their demo adapter
+  // ledgers are ephemeral. Serverless calls set this false and rehydrate those
+  // deterministic ledgers from their durable state snapshot per request.
+  if (resetStateOnStart) store.replace(stateFactory());
 
   function broadcast(message) {
     const payload = `event: ${message.type}\ndata: ${JSON.stringify(message.data)}\n\n`;
@@ -261,7 +291,7 @@ function createApplication({
   const orchestrator = new LazarusOrchestrator({ store, rain, monad, x402, negotiation, recovery, broadcast });
 
   async function routeApi(request, response, url) {
-    if (request.method === "POST") assertLocalMutation(request);
+    if (request.method === "POST") assertSameOriginMutation(request, { requireOrigin: allowRemoteHost });
     if (request.method === "GET" && url.pathname === "/api/health") {
       let rainHealth = { ok: true, mode: rain.mode || "local", authenticated: false };
       if (typeof rain.health === "function") {
@@ -308,6 +338,13 @@ function createApplication({
 
     if (request.method === "GET" && url.pathname === "/api/state") {
       return sendJson(response, 200, orchestrator.publicState());
+    }
+
+    if (request.method === "GET" && url.pathname === "/api/events" && !enableEventStream) {
+      return sendApiProblem(response, 405, {
+        code: "EVENT_STREAM_DISABLED",
+        message: "This deployment uses polling for state synchronization.",
+      });
     }
 
     if (request.method === "GET" && url.pathname === "/api/events") {
@@ -494,11 +531,11 @@ function createApplication({
     }
   }
 
-  const server = http.createServer(async (request, response) => {
+  async function requestHandler(request, response) {
     const requestId = randomUUID();
     response.setHeader("X-Request-Id", requestId);
     try {
-      assertLoopbackHost(request);
+      assertRequestHost(request, { allowRemoteHost });
       const url = new URL(request.url, `http://${request.headers.host || "localhost"}`);
       if (url.pathname.startsWith("/api/")) await routeApi(request, response, url);
       else if (request.method === "GET" || request.method === "HEAD") serveStatic(request, response, url);
@@ -527,14 +564,23 @@ function createApplication({
         });
       } else response.end();
     }
-  });
+  }
+
+  const server = http.createServer(requestHandler);
 
   server.on("close", () => {
     for (const client of clients) client.end();
     clients.clear();
   });
 
-  return { server, orchestrator, store, adapters: { rain, monad, x402, negotiation, recovery } };
+  return {
+    server,
+    requestHandler,
+    orchestrator,
+    store,
+    stateFactory,
+    adapters: { rain, monad, x402, negotiation, recovery },
+  };
 }
 
 if (require.main === module) {

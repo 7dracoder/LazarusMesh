@@ -1326,7 +1326,7 @@
     } catch (error) {
       setConnection("offline", "Offline");
       if (!quiet || !app.hasShownConnectionError) {
-        showToast("Local server unavailable", error.message, "error", 6000);
+        showToast("Service unavailable", error.message, "error", 6000);
         app.hasShownConnectionError = true;
       }
       if (!app.data.missions.length) render();
@@ -1364,7 +1364,7 @@
       if (!applyState(payload)) await loadState({ quiet: true });
       showToast(successTitle, action === "blocked-purchase"
         ? "Rain policy rejected the out-of-scope purchase as designed."
-        : "Mission state synchronized with the local orchestrator.");
+        : "Mission state synchronized with the recovery orchestrator.");
     } catch (error) {
       showToast("Mission action failed", error.message, "error", 6000);
     } finally {
@@ -1626,6 +1626,14 @@
   }
 
   function connectEventStream() {
+    if (app.data.system?.deployment?.eventTransport === "polling") {
+      app.eventSource?.close();
+      app.eventSource = null;
+      startPolling();
+      setConnection("online", "Polling every 5 seconds");
+      loadHealth();
+      return;
+    }
     if (!("EventSource" in window)) {
       startPolling();
       return;
