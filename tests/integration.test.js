@@ -5,6 +5,8 @@ const http = require("node:http");
 const os = require("node:os");
 const path = require("node:path");
 const { createApplication } = require("../server");
+const { MemoryStore } = require("../src/store");
+const { rehydrateLocalAdapters } = require("../src/rehydrate-local");
 
 async function withServer(run) {
   const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "lazarus-mesh-test-"));
@@ -51,6 +53,8 @@ test("full local recovery finishes with verified data, payments, and retired aut
     ));
     assert.ok(mission.payments.some((payment) => payment.network === "eip155:10143"));
     assert.ok(mission.transactions.some((transaction) => transaction.operation === "releaseReward"));
+    assert.ok(mission.events.some((event) => event.title === "Archive purchase simulated" && /\$0\.00 was charged/.test(event.description)));
+    assert.ok(mission.events.some((event) => event.title === "Policy safety test passed" && /No funds moved/.test(event.description)));
   });
 });
 
@@ -188,6 +192,9 @@ test("state publishes mission limits and truthful integration capabilities", asy
     assert.equal(state.system.missionCreation.contentRoot, state.missions[0].contentRoot);
     assert.equal(state.system.monad.writesEnabled, false);
     assert.equal(state.system.x402.liveSettlementEnabled, false);
+    assert.equal(state.system.financialExecution.mode, "local-simulation");
+    assert.equal(state.system.financialExecution.realFunds, false);
+    assert.equal(state.system.financialExecution.livePaymentsEnabled, false);
     assert.equal(state.system.productionReady, false);
   });
 });
@@ -317,6 +324,60 @@ test("mission creation rejects JSON null instead of returning an internal error"
     assert.equal(response.status, 400);
     assert.equal((await response.json()).error, "JSON_OBJECT_REQUIRED");
   });
+});
+
+test("durable deployment state can rehydrate local adapters between every mission step", async () => {
+  const store = new MemoryStore(() => ({ missions: [] }));
+  const app = createApplication({
+    store,
+    resetStateOnStart: false,
+    allowRemoteHost: true,
+    enableEventStream: false,
+    runtime: "vercel",
+  });
+  store.replace(app.stateFactory());
+  const missionId = store.get().activeMissionId;
+
+  for (let step = 1; step <= 9; step += 1) {
+    await rehydrateLocalAdapters(store.get(), app.adapters);
+    await app.orchestrator.step(missionId);
+    // Simulate JSONB serialization plus a new serverless invocation.
+    store.replace(JSON.parse(JSON.stringify(store.get())));
+  }
+
+  const mission = store.get().missions[0];
+  assert.equal(mission.status, "COMPLETED");
+  assert.equal(mission.pieces.verified, 24);
+  assert.equal(mission.seeders, 2);
+  assert.equal(mission.rainCard.state, "retired");
+  assert.equal(store.get().system.deployment.stateStore, "managed-postgres");
+  assert.equal(store.get().system.deployment.eventTransport, "polling");
+});
+
+test("serverless mode accepts remote hosts but requires a same-origin mutation", async () => {
+  const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "lazarus-mesh-serverless-test-"));
+  const { server } = createApplication({
+    dataFile: path.join(temporaryRoot, "state.json"),
+    allowRemoteHost: true,
+    enableEventStream: false,
+    runtime: "vercel",
+  });
+  try {
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const baseUrl = `http://127.0.0.1:${server.address().port}`;
+    const denied = await fetch(`${baseUrl}/api/demo/reset`, { method: "POST" });
+    assert.equal(denied.status, 403);
+    assert.match((await denied.json()).error, /same-origin/i);
+
+    const accepted = await fetch(`${baseUrl}/api/demo/reset`, {
+      method: "POST",
+      headers: { Origin: baseUrl },
+    });
+    assert.equal(accepted.status, 200);
+  } finally {
+    if (server.listening) await new Promise((resolve) => server.close(resolve));
+    fs.rmSync(temporaryRoot, { recursive: true, force: true });
+  }
 });
 
 test("mission creation rejects bodies above the local size limit cleanly", async () => {

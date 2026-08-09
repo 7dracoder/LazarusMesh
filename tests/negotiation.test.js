@@ -80,7 +80,14 @@ test('local negotiation deterministically turns a $12 ask into an accepted $9.75
     sessionId: offers.sessionId,
     offerId: offers.offers[0].offerId,
     amountMinor: 975,
-    terms: { ...DEFAULT_TERMS },
+    // JSONB stores objects semantically and may return their keys in a new order.
+    terms: {
+      service: DEFAULT_TERMS.service,
+      autoRenewal: DEFAULT_TERMS.autoRenewal,
+      dataSharing: DEFAULT_TERMS.dataSharing,
+      exclusivity: DEFAULT_TERMS.exclusivity,
+      purchaseModel: DEFAULT_TERMS.purchaseModel,
+    },
     idempotencyKey: 'counter-mission-test-1',
   });
 
@@ -199,4 +206,3 @@ test('quote evaluation rejects invalid session, expiry, merchant, ceiling, budge
     });
   }
 });
-

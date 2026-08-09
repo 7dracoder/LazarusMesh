@@ -55,4 +55,41 @@ class JsonStore {
   }
 }
 
-module.exports = { JsonStore };
+/**
+ * Synchronous in-process state used by the serverless request adapter. The
+ * adapter hydrates this store from Postgres before each API request and
+ * persists it after a successful mutation, so domain code can retain its
+ * intentionally synchronous store contract.
+ */
+class MemoryStore {
+  constructor(createDefaultState) {
+    this.createDefaultState = createDefaultState;
+    this.state = null;
+  }
+
+  load() {
+    if (!this.state) this.state = this.createDefaultState();
+    return this.state;
+  }
+
+  get() {
+    return this.load();
+  }
+
+  replace(nextState) {
+    this.state = nextState;
+    return this.state;
+  }
+
+  update(mutator) {
+    const state = this.load();
+    const result = mutator(state);
+    return result === undefined ? state : result;
+  }
+
+  save() {
+    return this.load();
+  }
+}
+
+module.exports = { JsonStore, MemoryStore };

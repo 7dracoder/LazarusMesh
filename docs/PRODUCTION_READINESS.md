@@ -4,7 +4,7 @@ Updated: 2026-08-08
 
 ## Executive status
 
-Lazarus Mesh is a production-shaped hybrid sandbox, not a production payment or recovery service. The application now reports that boundary directly in its API and UI instead of treating every configured rail as live.
+Lazarus Mesh is a deployment-ready, production-shaped hybrid sandbox, not a production payment or recovery service. The application now reports that boundary directly in its API and UI instead of treating every configured rail as live.
 
 | Component | Executed today | Production boundary |
 | --- | --- | --- |
@@ -13,6 +13,10 @@ Lazarus Mesh is a production-shaped hybrid sandbox, not a production payment or 
 | x402 | Local 402 requirement/receipt plus read-only facilitator capability probe | No payer signature, `PAYMENT-SIGNATURE`, facilitator verification, facilitator settlement, or `PAYMENT-RESPONSE` validation |
 | Bargaining | Deterministic, policy-bounded local offers and counteroffers | No authenticated merchant session or merchant-signed binding quote |
 | Recovery | Real hashing, piece verification, reconstruction, and root validation over the bundled CC0 fixture | No external provider transfer, durable storage, independent verifier service, or persistent reseeding |
+
+The Vercel deployment is backed by a free managed Neon Postgres database. It stores one versioned JSONB audit-state snapshot, reloads that snapshot before every serverless request, and persists successful mutations with an optimistic revision check. The deterministic local Rain, Monad, x402, negotiation, and recovery adapters are rebuilt from that snapshot on each request, so an interrupted Vercel instance can continue a local-demo mission on its next request.
+
+This fixes the old filesystem-only deployment blocker but deliberately does **not** make any external financial rail live. Vercel runs only `ADAPTER_MODE=local`; it rejects `rain-sandbox` configuration. Browser mutations require a same-origin browser request, and the deployed UI polls state instead of retaining a serverless SSE connection. There is still no user authentication, tenancy, RBAC, rate limiting, or webhook/reconciliation saga, so the deployment must not receive real funds or production credentials.
 
 `ADAPTER_MODE=rain-sandbox` therefore means **Rain sandbox writes with local execution everywhere else**. It does not mean production, real-money settlement, or Monad testnet writes.
 
@@ -50,7 +54,7 @@ Secrets remain server-side. The local `.env` file is ignored by version control 
 ## Required path to a testnet-live release
 
 1. Add a distinct `testnet-live` mode. Never silently promote `rain-sandbox` to live execution.
-2. Move missions, external-operation attempts, idempotency records, receipts, and reconciliation state into a transactional database.
+2. Replace the current single-snapshot demo persistence with normalized transactional missions, external-operation attempts, idempotency records, receipts, and reconciliation state. The current Neon snapshot is sufficient only for deterministic local adapters.
 3. Compile, test, audit, deploy, and verify `RecoveryBountyRegistry.sol` on Monad testnet.
 4. Use a managed signer/custody boundary. Simulate every transaction, enforce fee and nonce policy, wait for confirmations, and reconcile replacement or reorg events.
 5. Implement the x402 v2 buyer flow against an allowlisted resource: validate the 402 requirements, network, token, payee, amount, expiry, and resource; sign the authorization; retry with `PAYMENT-SIGNATURE`; validate `PAYMENT-RESPONSE` and the onchain settlement.
