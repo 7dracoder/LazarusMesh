@@ -672,13 +672,14 @@
         : !isVerified && index < recovered;
       const state = isVerified ? "Verified" : isRecovered ? "Recovered" : "Missing";
       const representedIndex = Math.floor((index / visualTotal) * total) + 1;
+      const endsRow = (index + 1) % columns === 0 || index === visualTotal - 1;
       cells.push(`
         <span
-          class="piece${isVerified ? " is-verified" : isRecovered ? " is-recovered" : ""}"
+          class="piece${isVerified ? " is-verified" : isRecovered ? " is-recovered" : ""}${endsRow ? " ends-row" : ""}"
           style="--piece-delay:${Math.min(index * 12, 360)}ms"
           title="Piece ${representedIndex}: ${state}"
           aria-hidden="true"
-        ><span>${String(representedIndex).padStart(2, "0")}</span></span>
+        ><i></i></span>
       `);
     }
     grid.innerHTML = cells.join("");
@@ -1748,8 +1749,7 @@
   function initializeTheme() {
     let stored;
     try { stored = localStorage.getItem("lazarus-theme"); } catch { stored = null; }
-    const preferred = window.matchMedia?.("(prefers-color-scheme: light)").matches ? "light" : "dark";
-    applyTheme(stored || preferred);
+    applyTheme(stored || "light");
   }
 
   function bindEvents() {
