@@ -635,14 +635,17 @@
       : "No external card mutations";
 
     const monadHealthUnavailable = healthPayloadUnavailable && Object.keys(monadHealth).length === 0;
-    const monadWrites = !monadHealthUnavailable
-      && (monad.writesEnabled === true || monadHealth.writesEnabled === true);
+    const monadPaymentWrites = !monadHealthUnavailable
+      && (
+        monad.x402PaymentWritesEnabled === true
+        || monadHealth.x402PaymentWritesEnabled === true
+      );
     const probeConfigured = monadNetwork.configured === true || monad.rpcConfigured === true;
     const probePassed = monadNetwork.ok === true;
     const monadStatus = monadHealthUnavailable
       ? "Runtime health unavailable"
-      : monadWrites
-      ? "Testnet writes enabled"
+      : monadPaymentWrites
+      ? "x402 testnet writes enabled"
       : probePassed
         ? "Network probe passed · read-only"
         : "Local ledger · read-only";
@@ -696,9 +699,11 @@
       ? "The provider bounty is included in merchant messages; settlement remains a separate policy step."
       : "The provider bounty remains in the local demo ledger and is not sent to the merchant.";
 
+    const missionCreationUnavailable = app.missionCreationPolicy.available === false;
+    const intentionalOneShot = system.deployment?.livePreviewOneShot === true;
     const needsAttention = healthPayloadUnavailable
       || !rainReady
-      || app.missionCreationPolicy.available === false
+      || (missionCreationUnavailable && !intentionalOneShot)
       || market.merchantNeedsAttention
       || market.providerNeedsAttention;
     elements.readinessStrip.dataset.state = needsAttention ? "attention" : rainExternal ? "sandbox" : "local";
@@ -715,7 +720,7 @@
           : "Demo simulation: no external merchant or provider agents are contacted; no funds or chain writes occur.";
     elements.readinessItems.innerHTML = [
       readinessItem("Rain", rainStatus, rainDetail, !rainReady ? "attention" : rainExternal ? "sandbox" : "local"),
-      readinessItem("Monad", monadStatus, monadDetail, monadHealthUnavailable ? "attention" : monadWrites ? "testnet" : probePassed ? "ready" : "local"),
+      readinessItem("Monad / x402", monadStatus, monadDetail, monadHealthUnavailable ? "attention" : monadPaymentWrites ? "testnet" : probePassed ? "ready" : "local"),
       readinessItem("x402", x402Status, x402Detail, x402HealthUnavailable ? "attention" : x402Live ? "testnet" : "local"),
       readinessItem("Marketplace", marketStatus, marketDetail, market.merchantNeedsAttention || market.providerNeedsAttention ? "attention" : merchantLive && providerLive ? "ready" : "local"),
     ].join("");
@@ -733,14 +738,14 @@
         : `Bundled ${providerName}`;
     elements.footerRuntime.textContent = healthPayloadUnavailable
       ? `${merchantRuntime} · ${providerRuntime} · runtime health unavailable`
-      : `${merchantRuntime} · ${providerRuntime} · ${rainExternal ? "Rain sandbox" : "Rain local"} · ${monadWrites ? "Monad testnet writes" : "Monad local ledger / testnet read-only"}`;
+      : `${merchantRuntime} · ${providerRuntime} · ${rainExternal ? "Rain sandbox" : "Rain local"} · ${monadPaymentWrites ? "Monad x402 testnet writes · bounty local" : "Monad local ledger / testnet read-only"}`;
     if (elements.runtimeFootnote) {
       elements.runtimeFootnote.innerHTML = market.merchantNeedsAttention || market.providerNeedsAttention
         ? `${escapeHtml(market.merchantPaused ? `${merchantName} paused` : market.merchantHealthFailed ? `${merchantName} health unavailable` : `${merchantName} not ready`)}<br />${escapeHtml(market.providerPaused ? `${providerName} paused` : market.providerHealthFailed ? `${providerName} health unavailable` : providerLive ? `${providerName} API ready` : `${providerName} bundled locally`)}`
         : merchantLive || providerLive
         ? `${escapeHtml(merchantLive ? `${merchantName} API ready` : `${merchantName} simulated`)}<br />${escapeHtml(providerLive ? `${providerName} API ready · bounty local` : `${providerName} bundled locally`)}`
         : rainExternal
-          ? `${escapeHtml(rainStatus)}<br />Monad ${monadWrites ? "testnet writes enabled" : "local ledger · testnet read-only"}`
+          ? `${escapeHtml(rainStatus)}<br />Monad ${monadPaymentWrites ? "x402 testnet writes enabled · bounty local" : "local ledger · testnet read-only"}`
           : "Local demo simulation<br />No external merchants, providers, or payment mutations";
     }
   }
@@ -892,14 +897,44 @@
     const reconciliationMission = asArray(app.data.missions).find((candidate) => (
       asObject(candidate.externalOperations).x402Pending
     ));
+    const livePreviewOneShot = app.data.system?.deployment?.livePreviewOneShot === true;
     const resetButton = $("#reset-demo");
-    $("#next-step").disabled = app.busy.size > 0 || terminal;
-    $("#run-demo").disabled = app.busy.size > 0 || terminal;
-    $("#blocked-purchase").disabled = app.busy.size > 0;
-    resetButton.disabled = app.busy.size > 0 || Boolean(authorityMission) || Boolean(reconciliationMission);
+    const nextButton = $("#next-step");
+    const runButton = $("#run-demo");
+    const challengeButton = $("#blocked-purchase");
+    const reconciliationLocked = Boolean(reconciliationMission);
+    const challengeCard = asObject(mission.rainCard);
+    const challengeExpiry = Date.parse(challengeCard.expiresAt ?? "");
+    const challengeAvailable = !terminal
+      && String(challengeCard.state ?? "").toLowerCase() === "active"
+      && Number.isFinite(challengeExpiry)
+      && challengeExpiry > Date.now()
+      && !reconciliationLocked;
+    nextButton.disabled = app.busy.size > 0 || terminal || reconciliationLocked;
+    runButton.disabled = app.busy.size > 0 || terminal || reconciliationLocked;
+    challengeButton.disabled = app.busy.size > 0 || !challengeAvailable;
+    challengeButton.title = challengeAvailable
+      ? "Exercise an additional denied purchase against the active scoped card"
+      : terminal
+        ? "Policy challenge unavailable after scoped-card authority is retired"
+        : "Run through scoped-card creation before exercising this policy challenge";
+    resetButton.disabled = app.busy.size > 0 || livePreviewOneShot || Boolean(authorityMission) || reconciliationLocked;
+    if (reconciliationMission) {
+      const paymentId = reconciliationMission.externalOperations.x402Pending.paymentId || "unknown payment";
+      const actionMessage = `Mission actions are paused until Monad x402 payment ${shorten(paymentId, 14, 8)} is reconciled.`;
+      nextButton.title = actionMessage;
+      runButton.title = actionMessage;
+    } else {
+      nextButton.title = terminal ? "Recovery is complete" : "Advance one recovery step";
+      runButton.title = terminal ? "Recovery is complete" : "Run the complete bounded recovery";
+    }
     if (reconciliationMission) {
       const paymentId = reconciliationMission.externalOperations.x402Pending.paymentId || "unknown payment";
       const resetMessage = `Reset unavailable until Monad x402 payment ${shorten(paymentId, 14, 8)} is reconciled.`;
+      resetButton.title = resetMessage;
+      resetButton.setAttribute("aria-label", resetMessage);
+    } else if (livePreviewOneShot) {
+      const resetMessage = "Reset is disabled on this protected one-shot Monad Preview.";
       resetButton.title = resetMessage;
       resetButton.setAttribute("aria-label", resetMessage);
     } else if (authorityMission) {
@@ -910,7 +945,7 @@
       resetButton.title = "Reset demo";
       resetButton.setAttribute("aria-label", "Reset demo");
     }
-    $("#run-demo").lastChild.textContent = terminal ? " Recovery complete" : " Run full recovery";
+    runButton.lastChild.textContent = terminal ? " Recovery complete" : " Run full recovery";
   }
 
   function renderLifecycle(mission) {
@@ -1101,32 +1136,45 @@
     const healthAdapters = asObject(app.health?.adapters);
     const monadRuntime = asObject(system.monad ?? system.integrations?.monad ?? system.adapters?.monad);
     const x402Runtime = asObject(system.x402 ?? system.integrations?.x402 ?? system.adapters?.x402);
-    const monadWrites = monadRuntime.writesEnabled === true || healthAdapters.monad?.writesEnabled === true;
+    const monadBountyWrites = monadRuntime.bountyWritesEnabled === true
+      || healthAdapters.monad?.bountyWritesEnabled === true;
     const x402Live = x402Runtime.liveSettlementEnabled === true || healthAdapters.x402?.liveSettlementEnabled === true;
     const financialExecution = asObject(system.financialExecution);
     const demoOnly = financialExecution.realFunds !== true;
     const rainExternal = system.rain?.external === true;
     const rain = latestMatching(allRecords, ["rain", "card"]);
     const x402 = latestMatching(allRecords, ["x402"]);
-    const monad = latestMatching(transactions, ["monad", "escrow", "contract", "chain"])
-      ?? latestMatching(payments, ["monad", "escrow"]);
+    const bountyTransactions = transactions.filter((record) => !/x402/.test(recordSearch(record)));
+    const bountyPayments = payments.filter((record) => !/x402/.test(recordSearch(record)));
+    const monad = latestMatching(bountyTransactions, ["monad", "escrow", "contract", "chain"])
+      ?? latestMatching(bountyPayments, ["monad", "escrow"]);
     const budget = budgetFor(mission);
     const stage = normalizeStage(mission);
 
-    if (elements.railsEyebrow) elements.railsEyebrow.textContent = demoOnly ? "Demo treasury" : "Agent treasury";
-    if (elements.railsHeading) elements.railsHeading.textContent = demoOnly ? "Simulated payment rails" : "Payment rails";
+    if (elements.railsEyebrow) {
+      elements.railsEyebrow.textContent = x402Live
+        ? "Testnet treasury"
+        : rainExternal
+          ? "Sandbox treasury"
+          : demoOnly ? "Demo treasury" : "Agent treasury";
+    }
+    if (elements.railsHeading) {
+      elements.railsHeading.textContent = x402Live || rainExternal ? "Payment rails" : "Simulated payment rails";
+    }
 
     updateRail("rain", rain, {
       idleState: "Standby",
       activeState: "Card authorized",
-      activeStateOverride: demoOnly ? (rainExternal ? "Sandbox simulated" : "Simulated locally") : null,
-      description: demoOnly
-        ? rainExternal
-          ? "Rain sandbox authorization simulation · no real funds"
-          : "Local card-policy simulation · no funds moved"
-        : "Scoped card for legacy archive access",
-      idleAmount: demoOnly ? `${displayMoney(0, budget.currency)} simulated` : `${displayMoney(0, budget.currency)} spent`,
-      amountSuffix: demoOnly ? " simulated" : " spent",
+      activeStateOverride: rainExternal ? null : demoOnly ? "Simulated locally" : null,
+      description: rainExternal
+        ? "Rain sandbox authorization and settlement · no production funds"
+        : demoOnly
+          ? "Local card-policy simulation · no funds moved"
+          : "Scoped card for legacy archive access",
+      idleAmount: rainExternal
+        ? `${displayMoney(0, budget.currency)} sandbox`
+        : demoOnly ? `${displayMoney(0, budget.currency)} simulated` : `${displayMoney(0, budget.currency)} spent`,
+      amountSuffix: rainExternal ? " sandbox" : demoOnly ? " simulated" : " spent",
       failedSuffix: " blocked",
     });
     const rainCardState = String(mission.rainCard?.state ?? "").trim().toLowerCase();
@@ -1156,18 +1204,18 @@
     const monadActive = Boolean(monad) || stage !== "DEAD";
     monadCard.classList.toggle("is-active", monadActive);
     $("#monad-state").textContent = monad
-      ? monadWrites ? recordStatus(monad, "Confirmed") : "Simulated locally"
+      ? monadBountyWrites ? recordStatus(monad, "Confirmed") : "Simulated locally"
       : stage === "DEAD"
-        ? monadWrites ? "Escrow ready" : "Local ledger ready"
-        : monadWrites ? "Escrow funded" : "Local ledger funded";
+        ? monadBountyWrites ? "Escrow ready" : "Local ledger ready"
+        : monadBountyWrites ? "Escrow funded" : "Local ledger funded";
     const latestSettlement = displayAsset(monad?.settlementAsset);
     const collateralRecord = latestMatching(transactions, ["claimbounty"]);
     const collateral = displayAsset(collateralRecord?.collateralAsset);
-    $("#monad-description").textContent = monad?.description ?? monad?.message ?? (monadWrites
+    $("#monad-description").textContent = monad?.description ?? monad?.message ?? (monadBountyWrites
       ? "Onchain bounty, collateral, and finality"
       : `Local bounty ledger · no blockchain writes${collateral ? ` · ${collateral} collateral reference` : " · MON collateral amount not quantified"}`);
-    $("#monad-amount").textContent = `${displayMoney(budget.reward, budget.currency)} ${monadWrites ? "bounty value" : "demo bounty value"}${latestSettlement ? ` · latest ${latestSettlement}` : ""}`;
-    $("#monad-reference").textContent = shorten(recordReference(monad) === "No receipt" ? (monadWrites ? "Monad network" : "Local simulation") : recordReference(monad), 9, 6);
+    $("#monad-amount").textContent = `${displayMoney(budget.reward, budget.currency)} ${monadBountyWrites ? "bounty value" : "demo bounty value"}${latestSettlement ? ` · latest ${latestSettlement}` : ""}`;
+    $("#monad-reference").textContent = shorten(recordReference(monad) === "No receipt" ? (monadBountyWrites ? "Monad network" : "Local simulation") : recordReference(monad), 9, 6);
     $("#monad-reference").title = String(recordReference(monad));
   }
 
@@ -1613,9 +1661,9 @@
     const healthAdapters = asObject(app.health?.adapters);
     const monadRuntime = asObject(system.monad ?? system.integrations?.monad ?? system.adapters?.monad);
     const x402Runtime = asObject(system.x402 ?? system.integrations?.x402 ?? system.adapters?.x402);
-    const monadWrites = monadRuntime.writesEnabled === true || healthAdapters.monad?.writesEnabled === true;
+    const monadBountyWrites = monadRuntime.bountyWritesEnabled === true
+      || healthAdapters.monad?.bountyWritesEnabled === true;
     const x402Live = x402Runtime.liveSettlementEnabled === true || healthAdapters.x402?.liveSettlementEnabled === true;
-    const demoOnly = asObject(system.financialExecution).realFunds !== true;
     const rainExternal = system.rain?.external === true;
 
     content.innerHTML = `<dl class="audit-list">${records.map((record) => {
@@ -1628,7 +1676,13 @@
         || record.applicationCode === "MERCHANT_NOT_ALLOWED"
         || /blocked|unapproved/.test(recordText)
       );
-      const locallySimulated = (isX402 && !x402Live) || (isMonad && !monadWrites) || (isRain && demoOnly);
+      const locallySimulated = isX402
+        ? !x402Live
+        : isMonad
+          ? !monadBountyWrites
+          : isRain
+            ? !rainExternal
+            : false;
       const label = policySafetyTest
         ? "Policy safety test"
         : locallySimulated
@@ -1636,9 +1690,7 @@
           ? "x402 local simulation"
           : isMonad
             ? "Monad local ledger"
-            : rainExternal
-              ? "Rain sandbox simulation"
-              : "Rain local simulation"
+            : "Rain local simulation"
         : titleCase(record.rail ?? record.provider ?? record.type ?? record.__origin);
       const reference = recordReference(record);
       const failed = statusIsFailure(record);

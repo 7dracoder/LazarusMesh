@@ -4,22 +4,21 @@
 
 Choose one truthful run profile:
 
-- **Remote merchant Production (recommended):** authenticated merchant bargaining and provider download; local Rain, local x402, local bounty, and no value or chain writes.
+- **Hybrid Production (recommended):** authenticated remote merchant bargaining and provider download plus armed Rain sandbox card operations; local x402 and local bounty; no real-money or chain movement.
 - **Local Production:** bundled 24-piece fixture and Atlas fallback; all operations local.
-- **Protected branch Preview:** local Rain plus one Privy-backed test-USDC x402 discovery payment through the co-located durable seller. The full bounty and archive purchase remain local.
-- **Local Rain sandbox:** do not present yet. The prior key must be rotated and the collateral/contract value replaced with a valid provider-issued UUID.
+- **Protected branch Preview:** local fixture, Rain sandbox archive allocation, and one real test-USDC x402 discovery payment through the co-located durable seller. The full bounty, verifier roles, and reseeding remain local.
 
 For the protected Preview, verify before opening the app:
 
 1. Vercel Deployment Protection is enabled.
 2. Live variables exist only on the intended branch Preview.
-3. The dedicated Privy payer has only the capped test USDC required.
+3. Exactly one dedicated low-value signer is configured: a complete Privy setup (preferred) or one 32-byte raw key. The verified run used the raw-key fallback.
 4. The receive-only payee is a different wallet; no payee secret is deployed.
 5. Price/cap are fixed at test USDC 0.01, authorization is at most five minutes, and confirmations are at least six.
 6. Seller and Neon settlement storage are enabled; the state key is unique and begins with `preview-`.
 7. Reset and new-mission creation return the one-shot denial.
 
-Before presenting the remote profile, open the [live Lazarus demo](https://lazarus-mesh-merchant-demo.vercel.app) and confirm that merchant health reports authenticated HTTPS, a pinned Ed25519 key, and a matching sponsor-pinned manifest. The separate [merchant operator console](https://lazarus-merchant.vercel.app) requires the private `OPERATOR_TOKEN` from that Vercel project's Production environment; never paste the server-to-server merchant API token into the browser. Core local accounting supports USD, EUR, GBP, CAD, and AUD through fixed demo references, not live FX. The deployed remote merchant accepts one configured currency at a time and is currently USD, so use USD for the timings below.
+Before presenting the hybrid profile, open the [live Lazarus demo](https://lazarus-mesh-merchant-demo.vercel.app) and confirm that merchant health reports authenticated HTTPS, a pinned Ed25519 key, and a matching sponsor-pinned manifest; Rain health must report the armed sandbox rather than local mode. The separate [merchant operator console](https://lazarus-merchant.vercel.app) requires the private `OPERATOR_TOKEN` from that Vercel project's Production environment; never paste the server-to-server merchant API token into the browser. Core local accounting supports USD, EUR, GBP, CAD, and AUD through fixed demo references, not live FX. The deployed remote merchant and Rain sandbox profile is USD, so use USD for the timings below.
 
 ## 0:00–0:25 — The problem
 
@@ -42,11 +41,11 @@ Select **Run full recovery**. On the protected x402 Preview, use only the preloa
 
 ## 0:50–1:25 — Discovery and bargaining
 
-In remote merchant Production, describe x402 as a local one-cent-reference simulation and say “no value moved.” Then open the separate merchant console and show that Lazarus created a real authenticated negotiation session.
+In hybrid Production, describe x402 as a local one-cent-reference simulation. Then open the separate merchant console and show that Lazarus created a real authenticated negotiation session.
 
-In the protected Preview, show the real 0.01 test-USDC settlement, payment ID, confirmed transaction hash, and explorer evidence. Explain:
+In the protected Preview, show the real test-USDC `0.01` settlement, payment ID, confirmed transaction hash, and explorer evidence. The verified transaction is [`0x204f66f2cc3180e619babc9c341ddc71805ca8240a556d4665cf449bfb15300d`](https://testnet.monadscan.com/tx/0x204f66f2cc3180e619babc9c341ddc71805ca8240a556d4665cf449bfb15300d); independent RPC checks confirmed chain `10143`, receipt success, and the exact 10,000-atomic official test-USDC Transfer. Explain:
 
-“A dedicated Privy server wallet signed only the approved Monad-testnet USDC authorization. A different wallet received it. The protected seller settled through the facilitator and Neon prevents a duplicate payment ID from charging again.”
+“A dedicated low-value raw-key signer signed only the approved Monad-testnet USDC authorization in this verified run; complete Privy signing is the preferred managed alternative, and the runtime allows exactly one signer type. A different wallet received the test USDC. The protected seller settled through the facilitator and Neon prevents a duplicate payment ID from charging again.”
 
 For the remote merchant profile, show the two-round transcript in both Lazarus and the merchant console:
 
@@ -68,19 +67,19 @@ Show the 5.00 demo bounty and 2.00 simulated collateral requirement.
 
 Say explicitly:
 
-“This remote-merchant run makes no Monad transaction. The offer message includes proposed bounty context, but the recovery bounty, provider claim, attestations, and 70/90/100 releases use the local ledger. Their hash-shaped receipts are not explorer transactions, and the merchant console does not persist or display them.”
+“This hybrid merchant-and-Rain run makes no Monad transaction. The offer message includes proposed bounty context, but the recovery bounty, provider claim, attestations, and 70/90/100 releases use the local ledger. Their hash-shaped receipts are not explorer transactions, and the merchant console does not persist or display them.”
 
 ## 1:50–2:25 — Controlled archive allocation
 
-In the current deployment, Rain stays local:
+In hybrid Production, Rain sandbox is armed and externally verified:
 
-“Lazarus creates one local card-like authority for the signed 9.75 quote. The 9.00 unrelated merchant/category attempt is denied and costs nothing; only the exact quoted allocation succeeds. The merchant is not actually charged or paid.”
+“Lazarus issued a real Rain sandbox scoped card for the signed 9.75 quote. Rain's own ledger shows the 9.00 unrelated MCC 5944 attempt declined and the exact 9.75 MCC 5734 archive authorization completed. This is sandbox behavior: no production card or real money is involved.”
 
-For the USD run, policy usage is 9.76: 0.01 discovery plus 9.75 archive allocation. In remote merchant Production both are simulated accounting, so the verified end-to-end run charged `$0.00` and made no chain write. In the separate protected x402 Preview only the discovery cent settles in test USDC; the 9.75 archive allocation remains local.
+For the USD run, policy usage is 9.76: 0.01 discovery plus 9.75 archive allocation. In hybrid Production, discovery is local while Rain records the archive operation in its sandbox; `$0.00` real money is charged and there is no chain write. In the separate protected x402 Preview, the discovery cent settles in test USDC and Rain records the 9.75 archive allocation in its sandbox; neither is production money.
 
-If asked about Rain, answer:
+If asked about Rain payment routes, answer:
 
-“The sandbox adapter is implemented, but we have not armed it with the currently supplied values: the exposed key must be rotated and the collateral identifier must be replaced with a valid Rain-issued UUID. We do not guess credentials or present a failed configuration as live.”
+“Lazarus implements and has verified Rain's scoped-card issuance, authorization, decline, and settlement path. The sponsor starter also lists `/payment-routes`, but this project does not implement or claim that separate cross-rail flow.”
 
 ## 2:25–3:15 — Recover and verify
 
@@ -101,7 +100,7 @@ State that reward release and seeders are local model state, not onchain bounty 
 
 ## 3:40–4:00 — Close
 
-“Lazarus Mesh separates autonomy from authority. The buyer bargains with a real merchant API, verifies its signed quote, and retrieves a sponsor-pinned artifact from the provider. Deterministic policy still decides what may happen. The remote run charges nothing; Privy/x402 testnet settlement is isolated to a different protected profile, and Rain stays unarmed until valid rotated credentials arrive.”
+“Lazarus Mesh separates autonomy from authority. The buyer bargains with a real merchant API, verifies its signed quote, retrieves a sponsor-pinned artifact, and constrains the archive purchase through Rain's sandbox. Deterministic policy still decides what may happen. Real x402 test-USDC settlement is isolated to a separate protected local-fixture Preview. The full bounty, verifier network, and reseeding remain local in every profile.”
 
 Closing line:
 

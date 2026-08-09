@@ -113,6 +113,10 @@ test("full local recovery finishes with verified data, payments, and retired aut
       .every((transaction) => transaction.chainWrite === false && transaction.details.chainWrite === false));
     assert.ok(mission.events.some((event) => event.title === "Archive purchase simulated" && /No money was charged/.test(event.description)));
     assert.ok(mission.events.some((event) => event.title === "Policy safety test passed" && /No funds moved/.test(event.description)));
+
+    const retiredChallenge = await fetch(`${baseUrl}/api/missions/${missionId}/blocked-purchase`, { method: "POST" });
+    assert.equal(retiredChallenge.status, 409);
+    assert.equal((await retiredChallenge.json()).code, "CARD_AUTHORITY_INACTIVE");
   });
 });
 
@@ -179,6 +183,62 @@ test("a failed run durably clears its transient running flag", async () => {
   assert.equal(store.get().missions[0].running, false);
   assert.ok(persisted.length >= 1);
   assert.equal(persisted.at(-1).missions[0].running, false);
+});
+
+test("retry after bargaining failure preserves one discovery receipt and spend", async () => {
+  const negotiation = new LocalNegotiationAdapter();
+  const getBindingQuote = negotiation.getBindingQuote.bind(negotiation);
+  let failBindingOnce = true;
+  negotiation.getBindingQuote = (input) => {
+    const quote = getBindingQuote(input);
+    if (failBindingOnce) {
+      failBindingOnce = false;
+      const error = new Error("Merchant quote lookup temporarily failed.");
+      error.code = "MERCHANT_UNREACHABLE";
+      error.statusCode = 502;
+      throw error;
+    }
+    return quote;
+  };
+
+  const persisted = [];
+  const store = new MemoryStore(() => ({ missions: [] }));
+  const app = createApplication({
+    store,
+    adapterOverrides: { negotiation },
+    persistState: async (state) => persisted.push(structuredClone(state)),
+  });
+  const mission = store.get().missions[0];
+
+  await assert.rejects(
+    app.orchestrator.run(mission.id, 0),
+    (error) => error.code === "MERCHANT_UNREACHABLE",
+  );
+
+  const firstReceipt = mission.payments.find((payment) => payment.network === "eip155:10143");
+  const firstAudit = mission.transactions.find((transaction) => transaction.operation === "availability intelligence");
+  assert.equal(mission.stepIndex, 0);
+  assert.equal(mission.status, "DISCOVERING");
+  assert.equal(mission.budget.spentMinor, 1);
+  assert.ok(firstReceipt);
+  assert.ok(firstAudit);
+  assert.equal(mission.payments.filter((payment) => payment.network === "eip155:10143").length, 1);
+  assert.equal(mission.transactions.filter((transaction) => transaction.operation === "availability intelligence").length, 1);
+  assert.equal(persisted.at(-1).missions[0].budget.spentMinor, 1);
+
+  await app.orchestrator.run(mission.id, 0);
+
+  const discoveryReceipts = mission.payments.filter((payment) => payment.network === "eip155:10143");
+  const discoveryAudits = mission.transactions.filter((transaction) => transaction.operation === "availability intelligence");
+  assert.equal(mission.status, "COMPLETED");
+  assert.equal(mission.stepIndex, 9);
+  assert.equal(mission.budget.spentMinor, 976);
+  assert.equal(discoveryReceipts.length, 1);
+  assert.equal(discoveryAudits.length, 1);
+  assert.equal(discoveryReceipts[0].receiptId, firstReceipt.receiptId);
+  assert.equal(discoveryReceipts[0].transactionHash, firstReceipt.transactionHash);
+  assert.equal(discoveryAudits[0].id, firstAudit.id);
+  assert.equal(mission.events.filter((event) => event.title === "Availability handshake simulated").length, 1);
 });
 
 test("mission audit export returns downloadable JSON", async () => {

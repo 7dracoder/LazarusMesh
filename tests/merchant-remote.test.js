@@ -8,6 +8,8 @@ const { createApplication } = require('../server');
 const { loadEnvFile, merchantRemoteConfig } = require('../src/config');
 const { createQuoteDigest } = require('../src/domain');
 const { MemoryStore } = require('../src/store');
+const { rehydrateLocalAdapters } = require('../src/rehydrate-local');
+const { RainSandboxAdapter } = require('../src/services/rain-sandbox');
 const {
   REMOTE_MERCHANT,
   RemoteNegotiationAdapter,
@@ -651,4 +653,200 @@ test('application completes an authenticated remote bargain and eight-piece reco
   assert.ok(paths.includes('/.well-known/lazarus-merchant-key.json'));
   assert.ok(paths.some((pathname) => pathname.endsWith('/manifest')));
   assert.equal(paths.filter((pathname) => /\/pieces\/\d+$/.test(pathname)).length, 8);
+});
+
+test('serverless hybrid deployment rehydrates remote recovery and Rain authority without duplicating external effects', async () => {
+  const { manifest, bytes } = fixtureManifest(8);
+  const signing = signingFixture();
+  const now = new Date();
+  const quote = signedQuote({
+    manifest,
+    signing,
+    issuedAt: new Date(now.getTime() - 60_000).toISOString(),
+    expiresAt: new Date(now.getTime() + 15 * 60_000).toISOString(),
+  });
+  const session = sessionFor(quote, { initialOfferAmountMinor: 1100 });
+  const merchantCalls = [];
+  const merchantFetch = async (url, options = {}) => {
+    const pathname = new URL(url).pathname;
+    merchantCalls.push({ pathname, method: options.method || 'GET' });
+    if (pathname === '/.well-known/lazarus-merchant-key.json') {
+      return jsonResponse({
+        keyId: signing.keyId,
+        algorithm: 'Ed25519',
+        publicKeyJwk: signing.publicKey.export({ format: 'jwk' }),
+      });
+    }
+    assert.equal(options.headers.Authorization, `Bearer ${API_TOKEN}`);
+    if (pathname === '/api/offers') return jsonResponse(session, 201);
+    if (pathname.endsWith('/counters')) {
+      return jsonResponse({ session, round: session.rounds[0], quote });
+    }
+    if (pathname.endsWith(`/quotes/${quote.quoteId}`)) return jsonResponse(quote);
+    if (pathname.endsWith('/manifest')) return jsonResponse(manifest);
+    const pieceMatch = pathname.match(/\/pieces\/(\d+)$/);
+    if (pieceMatch) return new Response(bytes[Number(pieceMatch[1])], { status: 200 });
+    return jsonResponse({ error: { code: 'NOT_FOUND', message: 'Not found.' } }, 404);
+  };
+
+  const rainCardId = '44444444-4444-4444-8444-444444444444';
+  const declinedTransactionId = '55555555-5555-4555-8555-555555555555';
+  const settledTransactionId = '66666666-6666-4666-8666-666666666666';
+  const rainCalls = [];
+  const rainFetch = async (url, options = {}) => {
+    const pathname = new URL(url).pathname;
+    const body = options.body ? JSON.parse(options.body) : null;
+    rainCalls.push({ pathname, method: options.method || 'GET', body });
+    if (pathname.endsWith('/cards/scoped')) {
+      return jsonResponse({
+        id: rainCardId,
+        last4: '0885',
+        status: 'active',
+        encryptedPan: { data: 'must-not-persist' },
+        encryptedCvc: { data: 'must-not-persist' },
+      });
+    }
+    if (pathname.endsWith('/simulate/transactions/authorize')) {
+      if (body.merchantName === 'Unrelated Luxury Market') {
+        return jsonResponse({
+          transactionId: declinedTransactionId,
+          status: 'declined',
+          declinedReason: 'scoped_card_mcc_not_allowed',
+        });
+      }
+      assert.equal(body.merchantName, REMOTE_MERCHANT.merchantName);
+      return jsonResponse({ transactionId: settledTransactionId, status: 'authorized' });
+    }
+    if (pathname.endsWith(`/simulate/transactions/${settledTransactionId}/settle`)) {
+      return jsonResponse({
+        transactionId: settledTransactionId,
+        status: 'settled',
+        completionReason: 'SETTLEMENT',
+      });
+    }
+    throw new Error(`Unexpected Rain request: ${pathname}`);
+  };
+
+  const negotiation = new RemoteNegotiationAdapter({
+    baseUrl: 'https://merchant.example',
+    apiToken: API_TOKEN,
+    expectedKeyId: signing.keyId,
+    contentRoot: manifest.merkleRootSha256,
+    currency: 'USD',
+    fetchImpl: merchantFetch,
+    clock: () => now,
+  });
+  const recovery = new RemoteRecoveryAdapter({
+    baseUrl: 'https://merchant.example',
+    apiToken: API_TOKEN,
+    trustedManifest: manifest,
+    currency: 'USD',
+    fetchImpl: merchantFetch,
+  });
+  const rain = new RainSandboxAdapter({
+    baseUrl: 'https://rain.invalid/v1',
+    allowedOrigin: 'https://rain.invalid',
+    apiKey: 'unit-test-rain-api-key',
+    userId: '11111111-1111-4111-8111-111111111111',
+    teamId: '22222222-2222-4222-8222-222222222222',
+    contractId: '33333333-3333-4333-8333-333333333333',
+    autoFundMinor: 0,
+    fetchImpl: rainFetch,
+    clock: () => now,
+  });
+  const store = new MemoryStore(() => ({ missions: [] }));
+  const app = createApplication({
+    adapterMode: 'rain-sandbox',
+    store,
+    resetStateOnStart: false,
+    allowRemoteHost: true,
+    enableEventStream: false,
+    runtime: 'vercel',
+    adapterOverrides: { negotiation, recovery, rain },
+  });
+  store.replace(app.stateFactory());
+  const missionId = store.get().activeMissionId;
+  session.missionId = missionId;
+
+  for (let step = 1; step <= 9; step += 1) {
+    await rehydrateLocalAdapters(store.get(), app.adapters, {
+      targetMissionId: missionId,
+      restoreTargetRecovery: true,
+    });
+    await app.orchestrator.step(missionId);
+    assert.equal(store.get().missions[0].stepIndex, step);
+    store.replace(JSON.parse(JSON.stringify(store.get())));
+  }
+
+  const mission = store.get().missions[0];
+  const rainPayments = mission.payments.filter((payment) => payment.mode === 'rain-sandbox');
+  const declined = rainPayments.filter((payment) => payment.authorized === false);
+  const settled = rainPayments.filter((payment) => payment.authorized === true);
+  const scopedCardCalls = rainCalls.filter((call) => call.pathname.endsWith('/cards/scoped'));
+  const authorizationCalls = rainCalls.filter((call) => call.pathname.endsWith('/simulate/transactions/authorize'));
+  const settlementCalls = rainCalls.filter((call) => call.pathname.endsWith('/settle'));
+
+  assert.equal(mission.status, 'COMPLETED');
+  assert.equal(mission.pieces.recovered, 8);
+  assert.equal(mission.pieces.verified, 8);
+  assert.equal(mission.audit.rootMatched, true);
+  assert.equal(mission.provider.externalEndpoint, true);
+  assert.equal(mission.rainCard.cardId, rainCardId);
+  assert.equal(mission.rainCard.state, 'expiry_scheduled');
+  assert.equal(mission.rainCard.transactionCount, 1);
+  assert.equal(scopedCardCalls.length, 1);
+  assert.equal(authorizationCalls.length, 2);
+  assert.equal(settlementCalls.length, 1);
+  assert.equal(declined.length, 1);
+  assert.equal(declined[0].transactionId, declinedTransactionId);
+  assert.equal(declined[0].code, 'MERCHANT_NOT_ALLOWED');
+  assert.equal(declined[0].remoteAttempted, true);
+  assert.equal(settled.length, 1);
+  assert.equal(settled[0].transactionId, settledTransactionId);
+  assert.equal(settled[0].status, 'settled');
+  assert.equal(settled[0].quoteId, quote.quoteId);
+  assert.equal(mission.negotiation.acceptedQuote.merchantSigned, true);
+  assert.equal(mission.negotiation.acceptedQuote.merchantAuthenticated, true);
+  const completionEvent = mission.events.find((event) => event.title === 'Mission completed');
+  assert.match(completionEvent.description, /Rain's sandbox ledger recorded the scoped-card settlement/i);
+  assert.doesNotMatch(completionEvent.description, /card allocation.*local|\$0\.00 charged/i);
+  assert.deepEqual(
+    [...new Set(merchantCalls
+      .map((call) => call.pathname.match(/\/pieces\/(\d+)$/)?.[1])
+      .filter(Boolean)
+      .map(Number))].sort((left, right) => left - right),
+    [0, 1, 2, 3, 4, 5, 6, 7],
+  );
+
+  const externalEffects = {
+    offerPosts: merchantCalls.filter((call) => call.pathname === '/api/offers').length,
+    counterPosts: merchantCalls.filter((call) => call.pathname.endsWith('/counters')).length,
+    scopedCards: scopedCardCalls.length,
+    authorizations: authorizationCalls.length,
+    settlements: settlementCalls.length,
+  };
+  assert.deepEqual(externalEffects, {
+    offerPosts: 1,
+    counterPosts: 1,
+    scopedCards: 1,
+    authorizations: 2,
+    settlements: 1,
+  });
+
+  await rehydrateLocalAdapters(store.get(), app.adapters, {
+    targetMissionId: missionId,
+    restoreTargetRecovery: true,
+  });
+  await rehydrateLocalAdapters(store.get(), app.adapters, {
+    targetMissionId: missionId,
+    restoreTargetRecovery: true,
+  });
+  assert.equal(rain.cards.size, 0);
+  assert.deepEqual({
+    offerPosts: merchantCalls.filter((call) => call.pathname === '/api/offers').length,
+    counterPosts: merchantCalls.filter((call) => call.pathname.endsWith('/counters')).length,
+    scopedCards: rainCalls.filter((call) => call.pathname.endsWith('/cards/scoped')).length,
+    authorizations: rainCalls.filter((call) => call.pathname.endsWith('/simulate/transactions/authorize')).length,
+    settlements: rainCalls.filter((call) => call.pathname.endsWith('/settle')).length,
+  }, externalEffects);
 });

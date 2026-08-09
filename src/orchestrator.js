@@ -202,6 +202,73 @@ class LazarusOrchestrator {
     });
   }
 
+  recordedAvailabilityReceipt(mission) {
+    const payments = Array.isArray(mission.payments) ? mission.payments : [];
+    const transactions = Array.isArray(mission.transactions) ? mission.transactions : [];
+    const candidates = payments.filter((payment) => (
+      payment?.network === "eip155:10143" || typeof payment?.receiptId === "string"
+    ));
+    const auditEntries = transactions.filter((transaction) => (
+      transaction?.rail === "x402 / Monad" && transaction?.operation === "availability intelligence"
+    ));
+    if (candidates.length === 0 && auditEntries.length === 0) return null;
+
+    const inconsistent = () => {
+      const error = new Error("Stored x402 discovery evidence is inconsistent; reconcile it before retrying.");
+      error.code = "X402_DISCOVERY_EVIDENCE_MISMATCH";
+      error.statusCode = 409;
+      return error;
+    };
+    if (
+      mission.stepIndex !== 0 ||
+      candidates.length !== 1 ||
+      auditEntries.length !== 1 ||
+      mission.externalOperations?.x402Pending
+    ) throw inconsistent();
+
+    const receipt = candidates[0];
+    const transaction = auditEntries[0];
+    if (
+      typeof receipt.receiptId !== "string" || !receipt.receiptId ||
+      receipt.missionId !== mission.id ||
+      receipt.mode !== this.x402.mode ||
+      receipt.status !== "settled" ||
+      receipt.protocolStatus !== 402 ||
+      receipt.currency !== mission.budget.currency ||
+      !Number.isSafeInteger(receipt.budgetImpactMinor) || receipt.budgetImpactMinor <= 0 ||
+      receipt.amountMinor !== receipt.budgetImpactMinor ||
+      typeof receipt.transactionHash !== "string" || !receipt.transactionHash ||
+      transaction.id !== receipt.transactionHash ||
+      transaction.status !== "settled" ||
+      transaction.amountMinor !== receipt.budgetImpactMinor ||
+      transaction.currency !== receipt.currency ||
+      transaction.synthetic !== receipt.synthetic ||
+      transaction.fundsMoved !== receipt.fundsMoved ||
+      transaction.externalEndpoint !== receipt.externalEndpoint ||
+      mission.budget.spentMinor !== receipt.budgetImpactMinor
+    ) throw inconsistent();
+
+    if (this.x402.mode === "local") {
+      if (
+        receipt.payer !== mission.principal.id ||
+        receipt.synthetic !== true ||
+        receipt.fundsMoved !== false ||
+        receipt.externalEndpoint !== false
+      ) throw inconsistent();
+    } else if (
+      receipt.contentRoot !== mission.contentRoot ||
+      receipt.principalId !== mission.principal.id ||
+      typeof receipt.paymentId !== "string" || !receipt.paymentId ||
+      receipt.confirmed !== true ||
+      receipt.synthetic !== false ||
+      receipt.fundsMoved !== true ||
+      receipt.chainWrite !== true ||
+      receipt.externalEndpoint !== true
+    ) throw inconsistent();
+
+    return receipt;
+  }
+
   getNegotiation(missionId) {
     return this.getMission(missionId).negotiation;
   }
@@ -340,28 +407,54 @@ class LazarusOrchestrator {
 
   async executeStep(mission, step) {
     if (step === 1) {
-      const requirement = await this.x402.requestAvailability(mission.contentRoot, {
-        budgetCurrency: mission.budget.currency,
-      });
-      const receipt = await this.x402.settleAvailability({
-        missionId: mission.id,
-        contentRoot: mission.contentRoot,
-        payer: mission.principal.id,
-        budgetCurrency: mission.budget.currency,
-      });
-      const pendingX402 = mission.externalOperations?.x402Pending;
-      if (
-        this.x402.mode !== "local" &&
-        (
-          !pendingX402 ||
-          pendingX402.receiptId !== receipt.receiptId ||
-          pendingX402.paymentId !== receipt.paymentId
-        )
-      ) {
-        const error = new Error("Confirmed x402 settlement does not match the durable pending-payment record.");
-        error.code = "X402_PENDING_PAYMENT_MISMATCH";
-        error.statusCode = 500;
-        throw error;
+      let receipt = this.recordedAvailabilityReceipt(mission);
+      if (!receipt) {
+        const requirement = await this.x402.requestAvailability(mission.contentRoot, {
+          budgetCurrency: mission.budget.currency,
+        });
+        receipt = await this.x402.settleAvailability({
+          missionId: mission.id,
+          contentRoot: mission.contentRoot,
+          payer: mission.principal.id,
+          budgetCurrency: mission.budget.currency,
+        });
+        const pendingX402 = mission.externalOperations?.x402Pending;
+        if (
+          this.x402.mode !== "local" &&
+          (
+            !pendingX402 ||
+            pendingX402.receiptId !== receipt.receiptId ||
+            pendingX402.paymentId !== receipt.paymentId
+          )
+        ) {
+          const error = new Error("Confirmed x402 settlement does not match the durable pending-payment record.");
+          error.code = "X402_PENDING_PAYMENT_MISMATCH";
+          error.statusCode = 500;
+          throw error;
+        }
+        mission.budget.spentMinor += receipt.budgetImpactMinor;
+        mission.payments.unshift({ ...receipt, protocolStatus: requirement.status });
+        mission.transactions.unshift({
+          id: receipt.transactionHash,
+          rail: "x402 / Monad",
+          operation: "availability intelligence",
+          status: "settled",
+          amountMinor: receipt.budgetImpactMinor,
+          currency: receipt.currency,
+          settlementAsset: receipt.settlementAsset,
+          timestamp: receipt.timestamp,
+          synthetic: receipt.synthetic === true,
+          fundsMoved: receipt.fundsMoved === true,
+          externalEndpoint: receipt.externalEndpoint === true,
+        });
+        if (this.x402.mode !== "local") {
+          // Do not checkpoint the confirmed receipt while stepIndex is still 0.
+          // step() persists the receipt, cleared gate, negotiation, and stepIndex
+          // together; a failure before that leaves the durable pending gate in
+          // place for explicit reconciliation instead of a half-applied step.
+          delete mission.externalOperations.x402Pending;
+          if (Object.keys(mission.externalOperations).length === 0) delete mission.externalOperations;
+        }
       }
       this.transition(
         mission,
@@ -371,29 +464,6 @@ class LazarusOrchestrator {
           : "Demo candidate selected and quote simulated",
       );
       mission.availability = 8;
-      mission.budget.spentMinor += receipt.budgetImpactMinor;
-      mission.payments.unshift({ ...receipt, protocolStatus: requirement.status });
-      mission.transactions.unshift({
-        id: receipt.transactionHash,
-        rail: "x402 / Monad",
-        operation: "availability intelligence",
-        status: "settled",
-        amountMinor: receipt.budgetImpactMinor,
-        currency: receipt.currency,
-        settlementAsset: receipt.settlementAsset,
-        timestamp: receipt.timestamp,
-        synthetic: receipt.synthetic === true,
-        fundsMoved: receipt.fundsMoved === true,
-        externalEndpoint: receipt.externalEndpoint === true,
-      });
-      if (this.x402.mode !== "local") {
-        // Do not checkpoint the confirmed receipt while stepIndex is still 0.
-        // step() persists the receipt, cleared gate, negotiation, and stepIndex
-        // together; a failure before that leaves the durable pending gate in
-        // place for explicit reconciliation instead of a half-applied step.
-        delete mission.externalOperations.x402Pending;
-        if (Object.keys(mission.externalOperations).length === 0) delete mission.externalOperations;
-      }
       await this.executeNegotiation(mission);
       this.addEvent(
         mission,
@@ -780,11 +850,20 @@ class LazarusOrchestrator {
         mission,
         "Lazarus Mesh",
         "Mission completed",
-        this.monad.mode === "local" && this.recovery.networkedProviders === true
-          ? "Authenticated merchant negotiation and remote artifact recovery completed. The bounty, card allocation, verifier quorum, and reseeding receipts remain local demo records with $0.00 charged."
-          : this.monad.mode === "local"
-            ? "The bundled-fixture recovery simulation completed. Demo allocations, scripted proofs, and local receipts reconciled with $0.00 charged."
-            : "Dead data is live again. Payment, proof, and recovery receipts reconciled.",
+        this.monad.mode === "local"
+          ? [
+              this.recovery.networkedProviders === true
+                ? `${this.negotiation.liveMerchantApi === true ? "Authenticated merchant negotiation and " : ""}remote artifact recovery completed.`
+                : "The bundled-fixture recovery completed.",
+              this.rain.mode === "rain-sandbox"
+                ? "Rain's sandbox ledger recorded the scoped-card settlement."
+                : "Scoped-card authority and settlement remained local simulations.",
+              this.x402.mode !== "local"
+                ? "Monad testnet x402 settled availability discovery in test USDC; no production money moved."
+                : "Availability discovery remained a local x402 simulation; no production money moved.",
+              "The Monad bounty, scripted verifier quorum, and reseeding receipts remain local demo records.",
+            ].join(" ")
+          : "Dead data is live again. Payment, proof, and recovery receipts reconciled.",
       );
     }
   }
@@ -794,6 +873,14 @@ class LazarusOrchestrator {
     if (!mission.rainCard?.cardId) {
       const error = new Error("Run through scoped-card creation first.");
       error.statusCode = 409;
+      throw error;
+    }
+    const cardState = String(mission.rainCard.state || "").toLowerCase();
+    const expiresAt = Date.parse(mission.rainCard.expiresAt || "");
+    if (cardState !== "active" || !Number.isFinite(expiresAt) || expiresAt <= Date.now()) {
+      const error = new Error("The mission no longer has active scoped-card authority for a manual challenge.");
+      error.statusCode = 409;
+      error.code = "CARD_AUTHORITY_INACTIVE";
       throw error;
     }
     const challengeAmountMinor = fromAccountingMinorUp(25_000, mission.budget.currency);
