@@ -25,6 +25,7 @@ test("Rain adapter authorizes bounded purchase and blocks oversized purchase", (
   assert.equal(card.synthetic, true);
   assert.equal(card.fundsMoved, false);
   assert.equal(card.externalEndpoint, false);
+  assert.equal(card.currency, "USD");
   const blocked = rain.authorizePurchase(card.cardId, {
     merchantId: "other",
     merchantName: "Other",
@@ -45,6 +46,16 @@ test("Rain adapter authorizes bounded purchase and blocks oversized purchase", (
   });
   assert.equal(wrongMerchant.authorized, false);
   assert.equal(wrongMerchant.code, "MERCHANT_NOT_ALLOWED");
+
+  const wrongCurrency = rain.authorizePurchase(card.cardId, {
+    merchantId: "archive",
+    merchantName: "Archive",
+    mcc: "5734",
+    amountMinor: 1200,
+    currency: "EUR",
+  });
+  assert.equal(wrongCurrency.authorized, false);
+  assert.equal(wrongCurrency.code, "CURRENCY_MISMATCH");
 
   const allowed = rain.authorizePurchase(card.cardId, {
     merchantId: "archive",
@@ -122,6 +133,33 @@ test("Monad adapter releases cumulative 70/90/100 percent tranches exactly once"
   assert.equal(monad.releaseTranche("m1", 90, "availability").amountMinor, 100);
   assert.equal(monad.releaseTranche("m1", 100, "replication").amountMinor, 50);
   assert.throws(() => monad.releaseTranche("m1", 250, "invalid"), /BOUNTY_NOT_RELEASABLE|INVALID_RELEASE_PERCENTAGE/);
+});
+
+test("Monad synthetic USDC references reconcile exactly across non-USD tranches", () => {
+  const monad = new LocalMonadAdapter({ clock });
+  const created = monad.createBounty({
+    missionId: "mission_cad_rounding",
+    sponsor: "principal",
+    contentRoot: "root",
+    rewardMinor: 686,
+    stakeMinor: 274,
+    currency: "CAD",
+  });
+  monad.claimBounty("mission_cad_rounding", "provider");
+  monad.recordAttestations("mission_cad_rounding", [
+    { verifierId: "north", result: "pass" },
+    { verifierId: "east", result: "pass" },
+  ]);
+  const releases = [
+    monad.releaseTranche("mission_cad_rounding", 70, "recovery"),
+    monad.releaseTranche("mission_cad_rounding", 90, "availability"),
+    monad.releaseTranche("mission_cad_rounding", 100, "replication"),
+  ];
+  const releasedAtomic = releases.reduce(
+    (sum, receipt) => sum + BigInt(receipt.settlementAsset.amountAtomic),
+    0n,
+  );
+  assert.equal(releasedAtomic.toString(), created.settlementAsset.amountAtomic);
 });
 
 test("Monad adapter rejects release percentages above 100 before funds can over-release", () => {

@@ -12,6 +12,7 @@ const { QUOTE_REASON_CODES, createQuoteDigest, evaluateQuote } = require('./nego
 const { PAYMENT_RAILS, selectRail } = require('./rail');
 const { DEMO_STEPS, getDemoStep, simulateRecovery } = require('./simulation');
 const { MISSION_STATUSES, canTransition, assertTransition } = require('./state-machine');
+const currency = require('./currency');
 
 /**
  * Public, dependency-free Lazarus domain API.
@@ -20,6 +21,7 @@ const { MISSION_STATUSES, canTransition, assertTransition } = require('./state-m
  * tests, server routes, and deterministic replay workers.
  */
 module.exports = {
+  ...require("./authority"),
   evaluatePolicy,
   evaluateQuote,
   canTransition,
@@ -42,4 +44,5 @@ module.exports = {
   PAYMENT_RAILS,
   SYNTHETIC_PIECE_COUNT,
   DEFAULT_PIECE_SIZE,
+  ...currency,
 };

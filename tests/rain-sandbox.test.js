@@ -35,6 +35,7 @@ function makeAdapter(fetchImpl, overrides = {}) {
     autoFundMinor: 0,
     fetchImpl,
     clock,
+    allowedOrigin: new URL(BASE_URL).origin,
     ...overrides,
   });
 }
@@ -141,6 +142,22 @@ test('Rain sandbox never returns or caches encrypted PAN or CVC fields', async (
   }
   assert.equal(Object.hasOwn(card, 'encryptedPan'), false);
   assert.equal(Object.hasOwn(card, 'encryptedCvc'), false);
+});
+
+test('Rain sandbox requires explicit active status and four-digit last4 before caching a card', async () => {
+  for (const payload of [
+    scopedCardPayload({ last4: '' }),
+    scopedCardPayload({ last4: '42x2' }),
+    scopedCardPayload({ status: undefined }),
+    scopedCardPayload({ status: 'pending' }),
+  ]) {
+    const rain = makeAdapter(async () => jsonResponse(payload));
+    await assert.rejects(
+      rain.createScopedCard(policy()),
+      (error) => error instanceof RainSandboxError && error.code === 'RAIN_INVALID_RESPONSE',
+    );
+    assert.equal(rain.cards.size, 0);
+  }
 });
 
 test('Rain sandbox normalizes an authorization followed by settlement', async () => {
@@ -264,6 +281,33 @@ test('Rain sandbox deliberately exercises a wrong-MCC remote decline', async () 
   });
 });
 
+test('Rain sandbox reports a provider decline instead of the local AUTHORIZED decision', async () => {
+  const rain = makeAdapter(async (url) => {
+    if (String(url).endsWith('/cards/scoped')) return jsonResponse(scopedCardPayload());
+    if (String(url).endsWith('/simulate/transactions/authorize')) {
+      return jsonResponse({
+        transactionId: TRANSACTION_ID,
+        status: 'declined',
+        declinedReason: 'insufficient_collateral',
+      });
+    }
+    throw new Error(`Unexpected request: ${url}`);
+  });
+  const card = await rain.createScopedCard(policy());
+  const result = await rain.authorizePurchase(card.cardId, {
+    intentId: 'intent-provider-decline',
+    merchantId: 'merchant_atlas_archive',
+    merchantName: 'Atlas Archive Cloud',
+    mcc: '5734',
+    amountMinor: 975,
+    currency: 'USD',
+  });
+  assert.equal(result.authorized, false);
+  assert.equal(result.applicationCode, 'AUTHORIZED');
+  assert.equal(result.code, 'RAIN_DECLINED');
+  assert.equal(result.rainDeclinedReason, 'insufficient_collateral');
+});
+
 test('Rain sandbox retirement truthfully schedules expiry without a remote mutation', async () => {
   const calls = [];
   const rain = makeAdapter(async (url, options) => {
@@ -290,4 +334,204 @@ test('Rain sandbox rejects malformed UUID configuration before any network call'
     (error) => error instanceof RainSandboxError && error.code === 'RAIN_INVALID_CONFIGURATION',
   );
   assert.equal(calls, 0);
+});
+
+test('Rain sandbox rejects non-USD card and authorization currencies before external calls', async () => {
+  let calls = 0;
+  const rain = makeAdapter(async () => {
+    calls += 1;
+    return jsonResponse(scopedCardPayload());
+  });
+
+  await assert.rejects(
+    rain.createScopedCard(policy({ currency: 'EUR' })),
+    (error) => error instanceof RainSandboxError && error.code === 'RAIL_CURRENCY_UNSUPPORTED',
+  );
+  assert.equal(calls, 0);
+
+  const card = await rain.createScopedCard(policy({ currency: 'USD' }));
+  assert.equal(calls, 1);
+  const denied = await rain.authorizePurchase(card.cardId, {
+    merchantId: 'merchant_atlas_archive',
+    merchantName: 'Atlas Archive Cloud',
+    mcc: '5734',
+    amountMinor: 975,
+    currency: 'EUR',
+  });
+  assert.equal(denied.authorized, false);
+  assert.equal(denied.code, 'CURRENCY_MISMATCH');
+  assert.equal(denied.remoteAttempted, false);
+  assert.equal(calls, 1);
+});
+
+test('Rain sandbox restores persisted card authority without exposing card data or calling Rain', async () => {
+  let calls = 0;
+  const rain = makeAdapter(async () => {
+    calls += 1;
+    return jsonResponse(scopedCardPayload());
+  });
+  const created = await rain.createScopedCard(policy({ currency: 'USD' }));
+  assert.equal(calls, 1);
+  rain.reset();
+
+  const restored = rain.restoreCard({ ...created, transactionCount: 1 });
+  assert.equal(calls, 1);
+  assert.equal(restored.currency, 'USD');
+  assert.equal(restored.transactionCount, 1);
+  assert.equal(JSON.stringify(restored).includes('encryptedPan'), false);
+});
+
+test('Rain sandbox restore rejects invalid mode, state, expiry, MCC, and transaction count', async () => {
+  const rain = makeAdapter(async () => jsonResponse(scopedCardPayload()));
+  const created = await rain.createScopedCard(policy({ currency: 'USD' }));
+  for (const card of [
+    { ...created, mode: 'local' },
+    { ...created, state: 'retired' },
+    { ...created, expiresAt: 'not-an-instant' },
+    { ...created, allowedMccs: ['57A4'] },
+    { ...created, transactionCount: -1 },
+    { ...created, transactionCount: created.maxTransactions + 1 },
+  ]) {
+    assert.throws(
+      () => rain.restoreCard(card),
+      (error) => error instanceof RainSandboxError && error.code === 'RAIN_INVALID_RESTORED_CARD',
+    );
+  }
+});
+
+test('Rain sandbox refuses to invent settlement evidence from an empty success body', async () => {
+  const rain = makeAdapter(async (url) => {
+    if (String(url).endsWith('/cards/scoped')) return jsonResponse(scopedCardPayload());
+    if (String(url).endsWith('/simulate/transactions/authorize')) {
+      return jsonResponse({ transactionId: TRANSACTION_ID, status: 'authorized' });
+    }
+    if (String(url).endsWith(`/simulate/transactions/${TRANSACTION_ID}/settle`)) return jsonResponse(null);
+    throw new Error(`Unexpected request: ${url}`);
+  });
+  const card = await rain.createScopedCard(policy());
+  await assert.rejects(
+    rain.authorizePurchase(card.cardId, {
+      intentId: 'intent-no-settlement-proof',
+      merchantId: 'merchant_atlas_archive',
+      merchantName: 'Atlas Archive Cloud',
+      mcc: '5734',
+      amountMinor: 975,
+      currency: 'USD',
+    }),
+    (error) => error instanceof RainSandboxError && error.code === 'RAIN_INVALID_RESPONSE',
+  );
+});
+
+test('Rain sandbox pins the production credential destination origin', () => {
+  assert.throws(
+    () => new RainSandboxAdapter({
+      baseUrl: 'https://attacker.invalid/v1',
+      apiKey: API_KEY,
+      userId: USER_ID,
+      teamId: TEAM_ID,
+      contractId: CONTRACT_ID,
+    }),
+    (error) => error instanceof RainSandboxError && error.code === 'RAIN_INVALID_CONFIGURATION',
+  );
+});
+
+test('Rain sandbox keeps one timeout active while the response body is streaming', async () => {
+  let requestSignal;
+  const rain = makeAdapter(async (_url, options) => {
+    requestSignal = options.signal;
+    return new Response(new ReadableStream({
+      pull() {
+        return new Promise(() => {});
+      },
+    }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  });
+  // The constructor enforces a production-safe minimum; shorten only this unit
+  // test so it proves the same deadline remains armed after headers arrive.
+  rain.timeoutMs = 25;
+
+  await assert.rejects(
+    rain.health(),
+    (error) => (
+      error instanceof RainSandboxError &&
+      error.code === 'RAIN_TIMEOUT' &&
+      error.retryable === true
+    ),
+  );
+  assert.equal(requestSignal.aborted, true);
+});
+
+test('Rain sandbox rejects streamed responses larger than 64 KiB', async () => {
+  const oversizedJson = JSON.stringify({ padding: 'x'.repeat(64 * 1024) });
+  const rain = makeAdapter(async () => new Response(oversizedJson, {
+    status: 200,
+    headers: { 'Content-Type': 'application/json' },
+  }));
+
+  await assert.rejects(
+    rain.health(),
+    (error) => (
+      error instanceof RainSandboxError &&
+      error.code === 'RAIN_RESPONSE_TOO_LARGE' &&
+      error.retryable === false
+    ),
+  );
+});
+
+test('Rain sandbox returns stable errors for unreadable and malformed response bodies', async (t) => {
+  await t.test('unreadable stream', async () => {
+    const rain = makeAdapter(async () => new Response(new ReadableStream({
+      start(controller) {
+        controller.error(new Error('sensitive upstream detail'));
+      },
+    }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    }));
+
+    await assert.rejects(
+      rain.health(),
+      (error) => (
+        error instanceof RainSandboxError &&
+        error.code === 'RAIN_RESPONSE_READ_FAILED' &&
+        error.retryable === true &&
+        !error.message.includes('sensitive upstream detail')
+      ),
+    );
+  });
+
+  await t.test('malformed JSON', async () => {
+    const rain = makeAdapter(async () => new Response('{not-json', {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    }));
+
+    await assert.rejects(
+      rain.health(),
+      (error) => (
+        error instanceof RainSandboxError &&
+        error.code === 'RAIN_INVALID_JSON_RESPONSE' &&
+        error.retryable === false
+      ),
+    );
+  });
+
+  await t.test('plain-text HTTP error', async () => {
+    const rain = makeAdapter(async () => new Response('temporarily unavailable', {
+      status: 503,
+      headers: { 'Content-Type': 'text/plain' },
+    }));
+
+    await assert.rejects(
+      rain.health(),
+      (error) => (
+        error instanceof RainSandboxError &&
+        error.code === 'RAIN_HTTP_503' &&
+        error.providerStatus === 503 &&
+        error.retryable === true
+      ),
+    );
+  });
 });

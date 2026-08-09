@@ -13,6 +13,7 @@ const QUOTE_REASON_CODES = Object.freeze([
   'QUOTE_RESOURCE_MISMATCH',
   'QUOTE_PURPOSE_NOT_ALLOWED',
   'QUOTE_CURRENCY_NOT_ALLOWED',
+  'QUOTE_BUDGET_CURRENCY_MISMATCH',
   'QUOTE_AMOUNT_INVALID',
   'QUOTE_CEILING_EXCEEDED',
   'QUOTE_BUDGET_EXCEEDED',
@@ -33,6 +34,7 @@ const QUOTE_REASON_TEXT = Object.freeze({
   QUOTE_RESOURCE_MISMATCH: 'The quote is for a different recovery artifact.',
   QUOTE_PURPOSE_NOT_ALLOWED: 'The quote is for an unapproved purpose.',
   QUOTE_CURRENCY_NOT_ALLOWED: 'The quote currency is not allowed.',
+  QUOTE_BUDGET_CURRENCY_MISMATCH: 'The quote and mission budget use different currencies.',
   QUOTE_AMOUNT_INVALID: 'The quote amount must be a positive safe integer in minor units.',
   QUOTE_CEILING_EXCEEDED: 'The quote exceeds the negotiation ceiling.',
   QUOTE_BUDGET_EXCEEDED: 'The quote would exceed the remaining mission budget.',
@@ -145,6 +147,18 @@ function evaluateQuote({
   }
   if (!includesNormalized(policy.allowedCurrencies, quote.currency)) {
     return result('QUOTE_CURRENCY_NOT_ALLOWED', { currency: quote.currency ?? null });
+  }
+  if (
+    mission.budget?.currency !== undefined &&
+    (
+      typeof mission.budget.currency !== 'string' ||
+      String(mission.budget.currency).trim().toUpperCase() !== String(quote.currency).trim().toUpperCase()
+    )
+  ) {
+    return result('QUOTE_BUDGET_CURRENCY_MISMATCH', {
+      quoteCurrency: quote.currency ?? null,
+      budgetCurrency: mission.budget?.currency ?? null,
+    });
   }
   if (!Number.isSafeInteger(quote.amountMinor) || quote.amountMinor <= 0) {
     return result('QUOTE_AMOUNT_INVALID');

@@ -34,11 +34,66 @@ async function rehydrateLocalAdapters(state, adapters) {
       recovery.verifyAll(mission.id);
     }
 
-    if (integer(mission.stepIndex) >= 1) {
+    const x402Receipts = (mission.payments || []).filter((payment) => (
+      payment?.mode === "monad-testnet"
+    ));
+    const localX402Receipts = (mission.payments || []).filter((payment) => (
+      payment?.mode === "local" && payment?.network === "eip155:10143"
+    ));
+    const pendingX402 = mission.externalOperations?.x402Pending;
+    if (pendingX402 && x402.mode !== "monad-testnet") {
+      const error = new Error("Stored mission has an unresolved Monad x402 payment prepared by another adapter mode.");
+      error.code = "PERSISTED_STATE_X402_MODE_MISMATCH";
+      throw error;
+    }
+    if (
+      integer(mission.stepIndex) < 9 &&
+      x402.mode === "local" &&
+      x402Receipts.length > 0
+    ) {
+      const error = new Error("Stored mission x402 settlement belongs to the Monad testnet adapter.");
+      error.code = "PERSISTED_STATE_X402_MODE_MISMATCH";
+      throw error;
+    }
+    if (
+      integer(mission.stepIndex) < 9 &&
+      x402.mode === "monad-testnet" &&
+      localX402Receipts.length > 0
+    ) {
+      const error = new Error("Stored mission x402 receipt belongs to the local simulation adapter.");
+      error.code = "PERSISTED_STATE_X402_MODE_MISMATCH";
+      throw error;
+    }
+    if (x402.mode === "monad-testnet") {
+      if (typeof x402.restoreReceipts !== "function") {
+        const error = new Error("The live x402 adapter cannot restore persisted receipts.");
+        error.code = "X402_RECONCILIATION_UNAVAILABLE";
+        throw error;
+      }
+      if (pendingX402) {
+        if (x402Receipts.length > 0 || typeof x402.restorePendingPayment !== "function") {
+          const error = new Error("Stored Monad x402 reconciliation state is inconsistent.");
+          error.code = "X402_RECONCILIATION_UNAVAILABLE";
+          throw error;
+        }
+        x402.restorePendingPayment(pendingX402);
+      }
+      x402.restoreReceipts(x402Receipts);
+      if (
+        integer(mission.stepIndex) < 9 &&
+        integer(mission.stepIndex) >= 1 &&
+        x402Receipts.length !== 1
+      ) {
+        const error = new Error("Stored mission is missing its unique confirmed Monad x402 receipt.");
+        error.code = "PERSISTED_STATE_X402_RECEIPT_MISSING";
+        throw error;
+      }
+    } else if (integer(mission.stepIndex) >= 1) {
       x402.settleAvailability({
         missionId: mission.id,
         contentRoot: mission.contentRoot,
         payer: mission.principal.id,
+        budgetCurrency: mission.budget.currency || "USD",
       });
     }
 
@@ -49,6 +104,7 @@ async function rehydrateLocalAdapters(state, adapters) {
         contentRoot: mission.contentRoot,
         rewardMinor: mission.budget.rewardMinor,
         stakeMinor: mission.budget.stakeMinor,
+        currency: mission.budget.currency || "USD",
       });
     }
     if (integer(mission.stepIndex) >= 3) {
@@ -70,7 +126,22 @@ async function rehydrateLocalAdapters(state, adapters) {
       if (releasedMinor >= rewardMinor) monad.releaseTranche(mission.id, 100, "replication");
     }
 
-    if (mission.rainCard?.cardId && typeof rain.restoreCard === "function") {
+    if (
+      mission.rainCard?.cardId &&
+      mission.rainCard.mode !== rain.mode &&
+      integer(mission.stepIndex) < 9
+    ) {
+      const error = new Error("Stored mission card authority belongs to a different Rain adapter mode.");
+      error.code = "PERSISTED_STATE_RAIN_MODE_MISMATCH";
+      throw error;
+    }
+
+    if (
+      mission.rainCard?.cardId &&
+      mission.rainCard.mode === rain.mode &&
+      integer(mission.stepIndex) < 9 &&
+      typeof rain.restoreCard === "function"
+    ) {
       const settledCount = (mission.payments || []).filter((payment) => (
         payment.cardId === mission.rainCard.cardId && payment.authorized === true
       )).length;

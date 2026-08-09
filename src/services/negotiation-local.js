@@ -1,6 +1,7 @@
 'use strict';
 
 const { createQuoteDigest } = require('../domain');
+const { fromAccountingMinorUp, normalizeCurrency } = require('../domain/currency');
 const { localId } = require('../lib/ids');
 
 const DEFAULT_TERMS = Object.freeze({
@@ -92,16 +93,22 @@ class LocalNegotiationAdapter {
     if (!Number.isSafeInteger(maximumRounds) || maximumRounds < 1 || maximumRounds > 10) {
       throw new NegotiationError('INVALID_NEGOTIATION_POLICY', 'maximumRounds must be between 1 and 10.');
     }
+    const currency = normalizeCurrency(requirements.currency);
+    if (!currency) {
+      throw new NegotiationError('NEGOTIATION_CURRENCY_NOT_SUPPORTED', 'The requested mission currency is not supported by the local negotiation market.');
+    }
+    const initialAmountMinor = fromAccountingMinorUp(ATLAS.initialAmountMinor, currency);
+    const floorAmountMinor = fromAccountingMinorUp(ATLAS.floorAmountMinor, currency);
     const maximumAmountMinor = requirements.maximumAmountMinor === undefined
-      ? ATLAS.initialAmountMinor
+      ? initialAmountMinor
       : positiveMinor(requirements.maximumAmountMinor, 'maximumAmountMinor');
-    if (maximumAmountMinor < ATLAS.floorAmountMinor) {
+    if (maximumAmountMinor < floorAmountMinor) {
       throw new NegotiationError('NEGOTIATION_CEILING_TOO_LOW', 'The local merchant cannot meet the configured ceiling.');
     }
 
     const createdAt = this.clock().toISOString();
     const sessionId = localId('negotiation', missionId, contentRoot, createdAt);
-    const offerId = localId('offer', sessionId, ATLAS.merchantId, ATLAS.initialAmountMinor);
+    const offerId = localId('offer', sessionId, ATLAS.merchantId, currency, initialAmountMinor);
     const offer = {
       offerId,
       sessionId,
@@ -111,8 +118,9 @@ class LocalNegotiationAdapter {
       mcc: ATLAS.mcc,
       contentRoot,
       purpose: DEFAULT_TERMS.service,
-      amountMinor: ATLAS.initialAmountMinor,
-      currency: 'USD',
+      amountMinor: initialAmountMinor,
+      currency,
+      exponent: 2,
       terms: { ...DEFAULT_TERMS },
       binding: false,
       source: 'simulated',
@@ -127,8 +135,11 @@ class LocalNegotiationAdapter {
       status: 'offers_received',
       maximumRounds,
       maximumAmountMinor,
-      currentSellerAmountMinor: ATLAS.initialAmountMinor,
-      initialAmountMinor: ATLAS.initialAmountMinor,
+      currency,
+      exponent: 2,
+      currentSellerAmountMinor: initialAmountMinor,
+      initialAmountMinor,
+      floorAmountMinor,
       offers: [offer],
       rounds: [],
       quote: null,
@@ -178,7 +189,7 @@ class LocalNegotiationAdapter {
     let seller;
     let quote = null;
 
-    if (amountMinor >= ATLAS.floorAmountMinor) {
+    if (amountMinor >= session.floorAmountMinor) {
       const issuedAt = timestamp;
       const expiresAt = new Date(this.clock().getTime() + 15 * 60 * 1000).toISOString();
       quote = {
@@ -191,7 +202,8 @@ class LocalNegotiationAdapter {
         contentRoot: session.contentRoot,
         purpose: DEFAULT_TERMS.service,
         amountMinor,
-        currency: 'USD',
+        currency: session.currency,
+        exponent: session.exponent,
         terms: { ...DEFAULT_TERMS },
         binding: true,
         source: 'simulated',
@@ -223,7 +235,7 @@ class LocalNegotiationAdapter {
       session.completedAt = timestamp;
     } else {
       const sellerAmount = Math.max(
-        ATLAS.floorAmountMinor,
+        session.floorAmountMinor,
         Math.floor((session.currentSellerAmountMinor + amountMinor) / 2),
       );
       seller = {

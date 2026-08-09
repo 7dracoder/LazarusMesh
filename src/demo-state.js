@@ -1,4 +1,5 @@
 const { randomUUID } = require("node:crypto");
+const { RATE_SET_ID, currencyInfo, fromAccountingMinorUp } = require("./domain/currency");
 
 function publicManifest(manifest) {
   return {
@@ -29,9 +30,15 @@ function createMission({
   title = "Restore the CC0 Rainfall Dataset",
   rewardMinor = 500,
   totalBudgetMinor = 2000,
+  currency = "USD",
+  currencyRateSet = RATE_SET_ID,
 } = {}) {
   const manifest = recovery.buildManifest(24);
   recovery.start(id, manifest);
+  const currencyMetadata = currencyInfo(currency);
+  if (!currencyMetadata) throw new Error("CURRENCY_NOT_SUPPORTED");
+  const converted = (usdMinor) => fromAccountingMinorUp(usdMinor, currency);
+  const stakeMinor = converted(200);
   const expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
   const negotiationTerms = {
     purchaseModel: "one_time",
@@ -64,7 +71,15 @@ function createMission({
       id: "provider_atlas_archive",
       name: "Atlas Archive Node",
       state: "unassigned",
-      stakeMinor: 200,
+      stakeMinor,
+      stakeCurrency: currency,
+      collateral: {
+        mode: "local-reference-only",
+        referenceAmountMinor: stakeMinor,
+        referenceCurrency: currency,
+        settlementAsset: "MON",
+        amountAtomic: null,
+      },
       reputation: 92,
       actorMode: "simulated",
       connected: false,
@@ -77,12 +92,27 @@ function createMission({
     pieces: recovery.progress(id),
     seeders: 0,
     budget: {
-      currency: "USD",
+      currency,
+      exponent: currencyMetadata.minorDigits,
+      accountingCurrency: currency,
+      currencyRateSet,
+      fx: {
+        mode: "demo-fixed-not-market-rate",
+        rateSet: currencyRateSet,
+        referenceCurrency: "USD",
+        minorPerUsd: currencyMetadata.minorPerUsd,
+      },
+      railSettlement: {
+        rain: { currency: "USD", mode: "sandbox-card-authorization" },
+        localScopedCard: { currency, mode: "simulation" },
+        monad: { asset: "USDC", decimals: 6, network: "eip155:10143" },
+        gasAndCollateral: { asset: "MON", decimals: 18, network: "eip155:10143" },
+      },
       totalMinor: totalBudgetMinor,
       spentMinor: 0,
       rewardMinor,
       releasedMinor: 0,
-      stakeMinor: 200,
+      stakeMinor,
     },
     policy: {
       rightsClass: "public_domain",
@@ -90,14 +120,15 @@ function createMission({
       allowedMerchantIds: ["merchant_atlas_archive"],
       allowedMerchants: ["merchant_atlas_archive"],
       allowedMccs: ["5734", "4816"],
-      maximumTransactionMinor: 1200,
-      perTransactionLimitMinor: 1200,
+      maximumTransactionMinor: converted(1200),
+      perTransactionLimitMinor: converted(1200),
       maximumTransactions: 1,
       maxTransactions: 1,
       totalLimitMinor: totalBudgetMinor,
       expiresAt,
-      humanApprovalThresholdMinor: 1500,
-      approvalThresholdMinor: 1500,
+      humanApprovalThresholdMinor: converted(1500),
+      approvalThresholdMinor: converted(1500),
+      allowedCurrencies: [currency],
       allowedRails: ["monad_escrow", "x402_monad", "rain_card"],
       killSwitchActive: false,
     },
@@ -107,14 +138,14 @@ function createMission({
       merchantAuthenticated: false,
       merchantSignedQuote: false,
       sessionId: null,
-      targetAmountMinor: 900,
-      maximumAmountMinor: 1200,
-      initialAmountMinor: 1200,
+      targetAmountMinor: converted(900),
+      maximumAmountMinor: converted(1200),
+      initialAmountMinor: converted(1200),
       maximumRounds: 3,
-      autoApprovalThresholdMinor: 1000,
+      autoApprovalThresholdMinor: converted(1000),
       allowedMerchantIds: ["merchant_atlas_archive"],
       allowedMccs: ["5734"],
-      allowedCurrencies: ["USD"],
+      allowedCurrencies: [currency],
       requiredTerms: negotiationTerms,
       offers: [],
       rounds: [],
@@ -153,7 +184,7 @@ function createMission({
 function createDefaultState(recovery, { system = {} } = {}) {
   const mission = createMission({ recovery });
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     activeMissionId: mission.id,
     system: {
       name: "Lazarus Mesh",

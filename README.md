@@ -2,18 +2,20 @@
 
 Lazarus Mesh is a local-first hackathon MVP for recovering legally authorized digital artifacts that still have a valid content commitment but no available complete copy.
 
-The included mission starts with a bundled CC0 rainfall dataset at zero modeled replicas. The system simulates provider discovery, bargains with a local merchant model from a `$12.00` ask to a policy-bound `$9.75` demo quote, simulates tightly bounded payment authority, reconstructs and verifies all 24 local fixture pieces, advances a demo bounty ledger, and models two replicas.
+The included mission starts with a bundled CC0 rainfall dataset at zero modeled replicas. The system discovers a provider, bargains with a local merchant model from a USD 12.00 reference ask to a policy-bound USD 9.75 reference quote, applies tightly bounded payment authority, reconstructs and verifies all 24 local fixture pieces, advances a demo bounty ledger, and models two replicas. Mission accounting is selectable in USD, EUR, GBP, CAD, or AUD using a fixed demo rate set.
 
 ## What is implemented
 
-The release has two explicit modes:
+The release has two independent adapter selectors:
 
-| Mode | Rain | Bargaining | Monad | x402 | Recovery |
-| --- | --- | --- | --- | --- | --- |
-| `local` (default) | Deterministic local scoped-card adapter | Deterministic local merchant | Local bounty ledger | Local HTTP 402 handshake | Real local bytes, hashes, and reconstruction |
-| `rain-sandbox` | External Rain sandbox API for collateral simulation, scoped cards, authorization/decline, and settlement simulation | Deterministic local merchant | Local bounty ledger | Local HTTP 402 handshake | Real local bytes, hashes, and reconstruction |
+| Selector | Values | Effect |
+| --- | --- | --- |
+| `ADAPTER_MODE` | `local` (default), `rain-sandbox` | Selects local Rain simulation or authenticated Rain sandbox calls. |
+| `MONAD_EXECUTION_MODE` | `local` (default), `x402-testnet` | Selects the x402-shaped local discovery simulation or a bounded real test-USDC x402 payment on Monad testnet. |
 
-`rain-sandbox` is therefore a hybrid sandbox mode. It makes authenticated external Rain sandbox calls, but it does not send real money. Monad bounty execution and x402 settlement remain local in both modes.
+Merchant bargaining, artifact recovery, verifier roles, reseeding, and the complete Monad bounty lifecycle remain deterministic/local under every combination. `x402-testnet` swaps only the one-cent availability-discovery payment. Rain sandbox accepts USD mission accounting only and uses sandbox rUSD collateral. Monad x402 settles the official test-USDC asset; MON is Monad's native gas asset for the seller/facilitator that submits settlement. The public Vercel deployment rejects both external modes.
+
+See [Hackathon Acceptance and Currency Model](docs/HACKATHON_ACCEPTANCE_AND_CURRENCY.md) for the exact rail, currency, and bounty-acceptance boundary.
 
 ## Who the merchants and agents are
 
@@ -27,15 +29,15 @@ The running app does **not** contact a real merchant or a network of autonomous 
 
 Their offers, counters, quotes, verification decisions, and receipts are structured local state transitions. No external Atlas business, provider endpoint, marketplace, seeder network, or verifier service is contacted. See [Actors, Merchants, and Live Integration](docs/ACTORS_AND_MERCHANTS.md) for the complete boundary and the exact setup required for real agent-to-agent communication.
 
-When public Monad RPC and x402 facilitator URLs are configured, `/api/health` performs read-only readiness checks:
+When public Monad RPC and x402 facilitator URLs are configured, `/api/health` can perform separate read-only readiness checks:
 
 - Monad `eth_chainId` must report testnet chain `10143` (`eip155:10143`).
 - The facilitator `/supported` response must advertise x402 v2, the `exact` scheme, and `eip155:10143`.
-- No transaction is signed, no contract is called, and `writesEnabled` remains `false` even if signing fields are present.
+- The probe itself never signs or writes. `writesEnabled` becomes true only when `MONAD_EXECUTION_MODE=x402-testnet` successfully constructs the live x402 adapter; bounty writes remain false.
 
 ## The bargaining flow
 
-The simulated merchant negotiation is deterministic and bounded:
+The merchant negotiation is deterministic, local, and bounded. The following USD transcript is the reference flow; EUR, GBP, CAD, and AUD missions use fixed demo reference equivalents:
 
 1. Atlas Archive Cloud asks `$12.00`.
 2. The buyer offers its `$9.00` target.
@@ -45,9 +47,9 @@ The simulated merchant negotiation is deterministic and bounded:
 
 Before simulated payment authorization, a separate fail-closed quote policy verifies the quote digest, session, merchant, MCC, content root, purpose, currency, amount, budget, terms, round count, approval threshold, and expiry. The accepted terms are one-time archival egress with no renewal, data sharing, or exclusivity. The local digest detects mutation; it is not a signature from a real merchant.
 
-The result saves `$2.25`, or `18.75%`, from the initial ask. A Rain card is created only after the quote passes both quote validation and the general spending policy.
+The USD reference result saves `$2.25`, or `18.75%`, from the initial ask. A Rain card is created only after the quote passes both quote validation and the general spending policy.
 
-## Exact default economics
+## Exact default USD economics
 
 | Item | Amount | Counted in mission `spentMinor`? |
 | --- | ---: | --- |
@@ -58,9 +60,11 @@ The result saves `$2.25`, or `18.75%`, from the initial ask. A Rain card is crea
 | Provider collateral requirement | `$2.00` | Tracked separately in the local Monad ledger |
 | Default mission budget | `$20.00` | Budget ceiling |
 
-Successful mission policy usage is exactly `$9.76`: one cent for discovery plus `$9.75` for the archive allocation. In local and deployed demo mode this is simulated accounting—`$0.00` is charged. With the minimum `$12.01` service cap, the UI therefore shows `$2.25` as **demo reserve remaining**. The Deal tab separately shows the same `$2.25` as **negotiated savings** from the `$12.00` ask; neither number means payment failed. The `$5.00` bounty is advanced locally at 70%, 90%, and 100%, corresponding to `$3.50`, then `$1.00`, then `$0.50` incremental demo-ledger entries.
+Successful USD mission policy usage is exactly `$9.76`: one cent for discovery plus `$9.75` for the archive allocation. In local and deployed demo mode this is simulated accounting—`$0.00` is charged. With the minimum `$12.01` service cap, the UI therefore shows `$2.25` as **demo reserve remaining**. The Deal tab separately shows the same `$2.25` as **negotiated savings** from the `$12.00` ask; neither number means payment failed. The `$5.00` bounty is advanced locally at 70%, 90%, and 100%, corresponding to `$3.50`, then `$1.00`, then `$0.50` incremental demo-ledger entries.
 
-In `rain-sandbox` mode, the adapter also simulates `$20.00` of rUSD collateral funding by default before its first card issuance. That is Rain sandbox setup, not mission spend, and no real funds move. Set `RAIN_AUTO_FUND_MINOR=0` only when the provisioned Rain contract already has enough sandbox collateral.
+For non-USD missions, every mission amount is stored and rendered in the selected currency's minor units. The fixed `lazarus-demo-reference-v1` table uses 100 USD cents, 92 euro cents, 78 pence, 137 Canadian cents, or 152 Australian cents per reference USD. These are deterministic demo values, not current market FX rates or a conversion service. Required reserves and debits round conservatively.
+
+In `rain-sandbox` mode, the adapter can also simulate a configured amount of rUSD collateral funding before first card issuance. That is Rain sandbox setup, not mission spend or an account balance, and no real funds move. `RAIN_AUTO_FUND_MINOR` defaults to `0`; set a positive USD-cent amount only when deliberate sandbox provisioning is required.
 
 ## Deploy to Vercel with free Postgres
 
@@ -73,9 +77,9 @@ vercel integration add neon --name lazarus-mesh-db --plan free_v3 -e production 
 vercel --prod
 ```
 
-The integration supplies `DATABASE_URL` to Vercel automatically. Leave `ADAPTER_MODE` unset (or set it to `local`) for the hosted demo. Do not deploy the previously shared Rain credential: it must be rotated first, and the present Vercel runtime intentionally refuses `rain-sandbox` mode until external payment operations have a durable saga and reconciliation layer.
+The integration supplies `DATABASE_URL` to Vercel automatically. Leave both `ADAPTER_MODE` and `MONAD_EXECUTION_MODE` unset (or set each to `local`) for the hosted demo. Do not deploy previously shared credentials: rotate them first. The Vercel runtime intentionally refuses Rain sandbox and Monad x402 testnet modes until the service has authentication, quotas, and durable external-operation reconciliation.
 
-This is a durable public **demo** deployment, not a live payment service. It runs the verified fixture, local bargain, local Monad ledger, local x402 handshake, and local scoped-card simulation. The current app has no user accounts or tenant isolation; do not add real funds, production cards, or wallet signing keys to this deployment.
+This is a durable public **demo** deployment, not a live payment service. It runs the verified fixture, selectable accounting currencies, local bargain, local Monad ledger, x402-shaped local simulation, and local scoped-card simulation. The current app has no user accounts or tenant isolation; do not add real funds, production cards, or wallet signing keys to this deployment.
 
 ## Run locally
 
@@ -135,6 +139,8 @@ POST /simulate/transactions/{id}/reverse           reverse an unexpected demo au
 GET  /issuing/cards/{cardId}                        safe card-status reconciliation
 ```
 
+Rain sandbox mission creation is intentionally USD-only. Select local Rain mode to demonstrate EUR, GBP, CAD, or AUD accounting; those currencies are not sent to Rain's hackathon card sandbox.
+
 Only safe metadata such as card ID, status, and last four digits enters application state. Rain's `encryptedPan` and `encryptedCvc` response fields are discarded immediately and never reach logs, JSON persistence, SSE, audit exports, the browser, or a model.
 
 ### Rain enforcement boundary
@@ -152,6 +158,22 @@ Rain applies a default 1.2× authorization buffer. For the accepted `$9.75` quot
 The deliberate blocked demo uses an unrelated merchant and MCC. Merchant identity is rejected by Lazarus policy; the Rain sandbox request exercises the card's MCC control. If the sandbox unexpectedly authorizes the challenge, the adapter immediately requests an authorization reversal and still reports the policy violation.
 
 Default Rain sandbox limits are 10 active scoped cards, 10 scoped cards created per user in a rolling 24-hour window, and `$5,000` approved scoped-card spend per user in a rolling 24-hour window. Repeated hybrid demos can consume the creation quota. Complete a mission before resetting; reset is blocked while an active sandbox card is present and does not remotely cancel cards.
+
+## Run one real Monad x402 testnet discovery payment
+
+This is an opt-in, capped local integration mode. It can move official Monad test USDC. The EIP-3009 authorization is gasless for the buyer; the submitting seller/facilitator needs testnet MON for chain gas. It does not make the bounty registry live.
+
+```text
+MONAD_EXECUTION_MODE=x402-testnet
+MONAD_RPC_URL=https://...
+MONAD_PRIVATE_KEY=...
+MONAD_PAY_TO_ADDRESS=0x...
+X402_AVAILABILITY_BASE_URL=https://seller.example/availability
+```
+
+The payer must be a dedicated low-value wallet funded with the required test USDC, the payee must be a different wallet, and the HTTPS seller must return the expected x402 v2 exact requirement and durable payment-identifier result. Defaults cap discovery at 10,000 USDC atomic units (test USDC 0.01) and require six confirmations. Before signing, Lazarus durably records a pending payment. Reset, fresh local startup, and another authorization are blocked until an ambiguous result is reconciled.
+
+Do not enable this mode on the public Vercel deployment. See [API and Testnet Integration Guide](docs/API_INTEGRATION.md) for every guardrail variable and [Hackathon Acceptance and Currency Model](docs/HACKATHON_ACCEPTANCE_AND_CURRENCY.md) for the acceptance checklist.
 
 ## Test
 
@@ -173,13 +195,13 @@ Rain sandbox tests use injected fake `fetch` implementations and dummy credentia
 ## Demo workflow
 
 1. Open the dashboard and confirm its `LOCAL` or `HYBRID SANDBOX` mode.
-2. Review the CC0 rights evidence, `$20.00` budget, and bounded policy.
+2. Review the CC0 rights evidence, selected-currency budget, and bounded policy.
 3. Select **Run full recovery**, or step through the nine actions.
-4. Watch the `$12.00 → $9.00 → $10.50 → $9.75` negotiation transcript.
-5. Confirm the one-cent x402 receipt and `$9.75` archive settlement.
-6. Confirm the unrelated `$9.00` challenge is declined and does not count as spend.
+4. Watch the reference `$12.00 → $9.00 → $10.50 → $9.75` negotiation transcript, converted to the selected demo accounting currency.
+5. Confirm the one-cent-reference x402 receipt and the accepted archive settlement in the selected mission currency.
+6. Confirm the unrelated challenge is declined and does not count as spend.
 7. Watch all 24 pieces become recovered and verified.
-8. Confirm the reconstructed SHA-256 matches, the `$5.00` demo reward reaches 100%, and two replicas are modeled.
+8. Confirm the reconstructed SHA-256 matches, the selected-currency demo reward reaches 100%, and two replicas are modeled.
 9. Export the audit JSON.
 10. In local mode, reset freely. In hybrid mode, complete the mission before resetting.
 
@@ -195,18 +217,18 @@ Browser dashboard
      -> deterministic quote policy + spending policy
      -> local bargaining adapter
      -> local Rain adapter OR external Rain sandbox adapter
-     -> local Monad bounty ledger
-     -> local x402 handshake
+     -> local Monad bounty ledger (always; full registry is not deployed)
+     -> x402-shaped local simulation OR opt-in Monad testnet x402 buyer
      -> local recovery engine operating on real fixture bytes
   -> local: JSON audit snapshot (.data/state.json)
   -> Vercel: Neon Postgres JSONB audit snapshot (optimistic revision check)
 
-Optional read-only health path
+Optional read-only readiness path
   -> Monad testnet RPC eth_chainId
   -> x402 facilitator /supported
 ```
 
-The browser uses plain HTML, CSS, and JavaScript. The server uses Node built-ins. `.data/state.json` is an audit snapshot, not a resumable external-payment ledger; every server start creates a fresh coherent application session.
+The browser uses plain HTML, CSS, and JavaScript. The server uses Node built-ins. `.data/state.json` is primarily an audit snapshot, not a general external-payment ledger. Normal local startup creates a fresh coherent session, but it fails closed instead when the prior snapshot contains unexpired Rain sandbox authority or an unresolved Monad x402 pending-payment record.
 
 ## Important files
 
@@ -218,12 +240,14 @@ src/rehydrate-local.js                 Rebuilds local demo adapter state per ser
 src/config.js                          .env loading and safe configuration mapping
 src/orchestrator.js                    Nine-step recovery and negotiation workflow
 src/demo-state.js                      Default mission, economics, and policies
+src/domain/currency.js                 Fixed demo accounting currencies and conservative conversion
 src/services/negotiation-local.js      Deterministic bounded bargaining
 src/services/rain-local.js             Local scoped-card simulation
 src/services/rain-sandbox.js           External Rain sandbox adapter
 src/services/monad-local.js            Local bounty/collateral/reward ledger
 src/services/monad-network.js          Read-only Monad/x402 readiness probes
-src/services/x402-local.js             Local HTTP 402 payment handshake
+src/services/x402-local.js             x402-shaped local discovery simulation
+src/services/x402-monad.js             Opt-in bounded Monad testnet x402 buyer
 src/services/recovery-local.js         Real byte splitting and reconstruction
 src/domain/negotiation-policy.js       Binding quote digest and validation
 src/domain/policy.js                   Deterministic spending authorization
@@ -249,7 +273,7 @@ fixtures/cc0-rainfall-dataset/         Bundled CC0 artifact
 | `POST` | `/api/missions/:id/blocked-purchase` | Exercise an additional policy challenge |
 | `GET` | `/api/missions/:id/export` | Download mission audit JSON |
 
-Mission creation requires explicit rights attestation. The current fixture flow publishes a conservative minimum recovery-service spend cap of `1201` minor units even though the deterministic negotiated run spends `976` minor units. The provider bounty is a separate commitment, so maximum authorized exposure is the service cap plus the bounty. Limits are available in `GET /api/state` under `system.missionCreation`; the API returns stable codes plus human-readable messages and no longer silently clamps out-of-range values or ignores mismatched content roots.
+Mission creation requires explicit rights attestation and a supported accounting currency. The USD reference minimum service cap is `1201` cents and the successful reference run uses `976` cents; the API publishes conservative currency-specific equivalents and limits in `GET /api/state` under `system.missionCreation`. The provider bounty is separate, so maximum authorized exposure is the service cap plus the bounty. Rain sandbox mode rejects non-USD missions. The API returns stable codes plus human-readable messages and does not silently clamp out-of-range values or ignore mismatched content roots.
 
 ## Safety and operational boundaries
 
@@ -260,7 +284,8 @@ Mission creation requires explicit rights attestation. The current fixture flow 
 - All external Rain writes use stable 64-character idempotency keys, bounded retries, timeouts, and same-origin redirect checks.
 - Application policy remains mandatory even when Rain independently enforces supported controls.
 - `rain-sandbox` means external sandbox behavior, not production cards or real funds.
-- Monad/x402 readiness checks are informational and read-only. The current runtime never signs Monad transactions or settles a live x402 payment.
+- The local x402 adapter is only x402-shaped simulation. `MONAD_EXECUTION_MODE=x402-testnet` is the sole current chain-write path and can move capped test USDC; it must use a dedicated payer, distinct payee, HTTPS seller, and durable payment-ID uniqueness.
+- Monad bounty creation, claims, verifier attestations, and tranche releases remain local even when live x402 discovery is enabled.
 - The Solidity contract is an unaudited future reference and is not used by the server.
 - The server is loopback-only and applies host/origin checks, request-size limits, security headers, and path-containment checks.
 
@@ -269,12 +294,13 @@ Mission creation requires explicit rights attestation. The current fixture flow 
 - [Complete project guide](PROJECT_GUIDE.md)
 - [Live API integration guide](docs/API_INTEGRATION.md)
 - [Production-readiness boundary](docs/PRODUCTION_READINESS.md)
+- [Hackathon acceptance and currency model](docs/HACKATHON_ACCEPTANCE_AND_CURRENCY.md)
 - [Master product blueprint](LAZARUS_MESH_MASTER_PLAN.md)
 - [Rain + Monad dossier](RAIN_MONAD_DOSSIER.md)
 - [Original build brief](HACKATHON_BUILD_BRIEF.md)
 
 ## Status
 
-Hybrid hackathon MVP. Rain sandbox integration is implemented. Bargaining, Monad settlement, x402 settlement, and recovery-provider networking remain deterministic/local except for optional read-only Monad/x402 readiness probes. It is not production-ready.
+Hybrid hackathon MVP. Multi-currency mission accounting, Rain sandbox integration, and an opt-in real Monad testnet x402 availability payment are implemented. Bargaining, the full Monad bounty, recovery-provider networking, verifier independence, and reseeding remain deterministic/local. The public Vercel deployment remains local-only. It is not production-ready.
 
 See [Production readiness](docs/PRODUCTION_READINESS.md) for the exact live/simulated boundary, current configuration gaps, crash-safety requirements, and the staged path to a testnet-live release.

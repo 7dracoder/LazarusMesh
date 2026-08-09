@@ -2455,7 +2455,7 @@ html[data-theme="light"] .primary-button {
 }
 
 .input-prefix input {
-  padding-left: 25px;
+  padding-left: var(--prefix-padding, 25px);
 }
 
 .cost-preview {

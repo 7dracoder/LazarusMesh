@@ -496,14 +496,26 @@
             </select>
           </label>
           <label class="field">
-            <span>Recovery service spend cap (USD)</span>
-            <div class="input-prefix"><span>$</span><input id="budget-input" name="budget" type="number" min="12.01" max="5000" step="0.01" value="20.00" aria-describedby="budget-help budget-error" required /></div>
+            <span>Mission accounting currency</span>
+            <select id="currency-input" name="currency" aria-describedby="currency-help currency-error" required>
+              <option value="USD">USD — US Dollar</option>
+              <option value="EUR">EUR — Euro</option>
+              <option value="GBP">GBP — British Pound</option>
+              <option value="CAD">CAD — Canadian Dollar</option>
+              <option value="AUD">AUD — Australian Dollar</option>
+            </select>
+            <small id="currency-help">The local demo accepts five accounting currencies using a fixed demo rate. Rain sandbox remains USD; Monad settlement remains USDC.</small>
+            <small class="field-error" id="currency-error" hidden></small>
+          </label>
+          <label class="field">
+            <span id="budget-field-label">Recovery service spend cap (USD)</span>
+            <div class="input-prefix"><span id="budget-prefix">$</span><input id="budget-input" name="budget" type="number" min="12.01" max="5000" step="0.01" value="20.00" aria-describedby="budget-help budget-error" required /></div>
             <small id="budget-help">Allowed range: $12.01–$5,000.00 for Rain/x402 archive access, discovery, and fees.</small>
             <small class="field-error" id="budget-error" hidden></small>
           </label>
           <label class="field">
-            <span>Recovery bounty (USD)</span>
-            <div class="input-prefix"><span>$</span><input id="reward-input" name="reward" type="number" min="1" max="1000" step="0.01" value="5.00" aria-describedby="reward-help reward-error" required /></div>
+            <span id="reward-field-label">Recovery bounty (USD)</span>
+            <div class="input-prefix"><span id="reward-prefix">$</span><input id="reward-input" name="reward" type="number" min="1" max="1000" step="0.01" value="5.00" aria-describedby="reward-help reward-error" required /></div>
             <small id="reward-help">Released through the configured Monad rail after verification.</small>
             <small class="field-error" id="reward-error" hidden></small>
           </label>
@@ -521,7 +533,7 @@
             <div><dt>Recovery bounty</dt><dd id="cost-reward">$5.00</dd></div>
             <div><dt>Archive access, discovery &amp; fees reserve</dt><dd id="cost-reserve">Up to $20.00</dd></div>
           </dl>
-          <p id="cost-note">Service spending and the Monad bounty are independently bounded. Unused service reserve remains unspent.</p>
+          <p id="cost-note">Service spending and the Monad bounty are independently bounded. Currency conversion is a deterministic demo reference, not a live FX quote; Rain uses USD and Monad uses test USDC.</p>
         </section>
 
         <div class="policy-preview">

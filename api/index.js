@@ -64,10 +64,24 @@ function createBufferedResponse(response) {
 function createRuntime() {
   const adapterMode = process.env.ADAPTER_MODE || "local";
   if (adapterMode !== "local") {
-    throw new Error("The Vercel deployment supports only ADAPTER_MODE=local. Do not enable Rain sandbox credentials until its external-operation saga is durable.");
+    throw new Error("The public Vercel demo supports ADAPTER_MODE=local only. Run Rain sandbox locally until authenticated tenancy, quotas, and durable external-operation reconciliation are installed.");
+  }
+  if ((process.env.MONAD_EXECUTION_MODE || "local") !== "local") {
+    throw new Error("The public Vercel demo keeps Monad execution local. Run capped x402 testnet payments only from an access-controlled runtime with durable seller idempotency.");
   }
 
   const store = new MemoryStore(() => ({ missions: [] }));
+  const persistence = new NeonStateStore({ connectionString: process.env.DATABASE_URL });
+  let revision = null;
+  let persistedSnapshot = null;
+  const saveIfChanged = async (state) => {
+    if (revision === null) throw new Error("Deployment persistence was not initialized.");
+    const serialized = JSON.stringify(state);
+    if (serialized === persistedSnapshot) return revision;
+    revision = await persistence.save(state, revision);
+    persistedSnapshot = serialized;
+    return revision;
+  };
   const application = createApplication({
     adapterMode,
     env: process.env,
@@ -76,10 +90,16 @@ function createRuntime() {
     allowRemoteHost: true,
     enableEventStream: false,
     runtime: "vercel",
+    persistState: saveIfChanged,
   });
   return {
     ...application,
-    persistence: new NeonStateStore({ connectionString: process.env.DATABASE_URL }),
+    persistence,
+    initializePersistence(snapshot) {
+      revision = snapshot.revision;
+      persistedSnapshot = JSON.stringify(snapshot.state);
+    },
+    saveIfChanged,
   };
 }
 
@@ -106,6 +126,7 @@ module.exports = async function handler(request, response) {
     // would let the GET replace the POST's in-flight state.
     const app = createRuntime();
     const snapshot = await app.persistence.load(app.stateFactory);
+    app.initializePersistence(snapshot);
     migrateStateForRuntime(snapshot.state, app.system);
     app.store.replace(snapshot.state);
     await rehydrateLocalAdapters(app.store.get(), app.adapters);
@@ -113,7 +134,7 @@ module.exports = async function handler(request, response) {
     const bufferedResponse = createBufferedResponse(response);
     await app.requestHandler(request, bufferedResponse);
     if (request.method === "POST" && bufferedResponse.statusCode < 400) {
-      await app.persistence.save(app.store.get(), snapshot.revision);
+      await app.saveIfChanged(app.store.get());
     }
     bufferedResponse.flush();
   } catch (error) {

@@ -55,7 +55,7 @@ test("legacy deployed missions migrate to explicit local actor and no-funds meta
 
   const migrated = migrateStateForRuntime(state, runtimeSystem());
   const mission = migrated.missions[0];
-  assert.equal(migrated.schemaVersion, 2);
+  assert.equal(migrated.schemaVersion, 3);
   assert.equal(mission.objective, "Reconstruct a known CC0 fixture, verify every piece, and model two complete replicas.");
   assert.equal(mission.statusLabel, "Fixture unavailable — no modeled replica");
   assert.equal(mission.principal.id, "principal_lazarus_demo");
@@ -86,4 +86,117 @@ test("legacy deployed missions migrate to explicit local actor and no-funds meta
 
   migrateStateForRuntime(state, runtimeSystem());
   assert.equal(mission.events.filter((event) => event.id === "actor_boundary_v2:mission_legacy").length, 1);
+});
+
+test("schema-2 external Rain and Monad x402 evidence remains external under a local runtime", () => {
+  const rainPayment = {
+    mode: "rain-sandbox",
+    receiptId: "rain_external_receipt",
+    transactionHash: "rain_external_transaction",
+    status: "settled",
+    synthetic: false,
+    fundsMoved: true,
+    externalEndpoint: true,
+    amountMinor: 975,
+    currency: "USD",
+  };
+  const x402Payment = {
+    mode: "monad-testnet",
+    receiptId: "x402_external_receipt",
+    transactionHash: `0x${"ab".repeat(32)}`,
+    status: "settled",
+    network: "eip155:10143",
+    synthetic: false,
+    fundsMoved: true,
+    externalEndpoint: true,
+    chainWrite: true,
+    amountMinor: 1,
+    budgetImpactMinor: 1,
+    currency: "USD",
+    settlementAsset: {
+      symbol: "USDC",
+      address: "0x534b2f3A21130d7a60830c2Df862319e593943A3",
+      decimals: 6,
+      amountAtomic: "10000",
+    },
+  };
+  const rainTransaction = {
+    id: "rain_external_transaction",
+    rail: "Rain scoped card",
+    status: "settled",
+    synthetic: false,
+    fundsMoved: true,
+    externalEndpoint: true,
+  };
+  const x402Transaction = {
+    id: x402Payment.transactionHash,
+    rail: "x402 / Monad",
+    status: "settled",
+    synthetic: false,
+    fundsMoved: true,
+    externalEndpoint: true,
+    chainWrite: true,
+    details: {
+      synthetic: false,
+      fundsMoved: true,
+      externalEndpoint: true,
+      chainWrite: true,
+    },
+  };
+  const state = {
+    schemaVersion: 2,
+    system: { name: "Lazarus Mesh" },
+    missions: [{
+      id: "mission_external_history",
+      createdAt: "2026-08-08T16:00:00.000Z",
+      completedAt: "2026-08-08T16:10:00.000Z",
+      budget: { currency: "USD" },
+      principal: { id: "principal_external", name: "External Sponsor" },
+      rainCard: {
+        cardId: "11111111-1111-4111-8111-111111111111",
+        mode: "rain-sandbox",
+        currency: "USD",
+        synthetic: false,
+        fundsMoved: true,
+        externalEndpoint: true,
+      },
+      payments: [rainPayment, x402Payment],
+      transactions: [rainTransaction, x402Transaction],
+      events: [{
+        id: "external_payment_event",
+        source: "x402",
+        title: "Availability intelligence purchased",
+        description: "A confirmed external testnet payment was recorded.",
+      }],
+    }],
+  };
+  const expectedEvidence = structuredClone({
+    rainPayment,
+    x402Payment,
+    rainTransaction,
+    x402Transaction,
+  });
+
+  const migrated = migrateStateForRuntime(state, runtimeSystem());
+  const mission = migrated.missions[0];
+
+  assert.equal(migrated.schemaVersion, 3);
+  assert.equal(mission.rainCard.mode, "rain-sandbox");
+  assert.equal(mission.rainCard.synthetic, false);
+  assert.equal(mission.rainCard.fundsMoved, true);
+  assert.equal(mission.rainCard.externalEndpoint, true);
+  assert.deepEqual(mission.payments[0], expectedEvidence.rainPayment);
+  assert.deepEqual(mission.payments[1], expectedEvidence.x402Payment);
+  assert.deepEqual(mission.transactions[0], expectedEvidence.rainTransaction);
+  assert.deepEqual(mission.transactions[1], expectedEvidence.x402Transaction);
+  assert.equal(mission.transactions[1].chainWrite, true);
+  assert.equal(mission.transactions[1].details.chainWrite, true);
+  assert.equal(
+    mission.events.find((event) => event.id === "external_payment_event").description,
+    "A confirmed external testnet payment was recorded.",
+  );
+  assert.match(
+    mission.events.find((event) => event.id === "actor_boundary_v2:mission_external_history").description,
+    /unless an external connector is explicitly reported/,
+  );
 });

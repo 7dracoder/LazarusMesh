@@ -9,12 +9,7 @@
     VERIFIED: "Scripted quorum confirming the content root",
     RESEEDED: "Two demo replicas modeled locally",
   };
-  const money = new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  });
+  const moneyFormatters = new Map();
 
   const app = {
     data: { missions: [], activeMissionId: null, system: {} },
@@ -71,6 +66,7 @@
     missionFormErrorMessage: $("#mission-form-error-message"),
     createMissionButton: $("#create-mission-submit"),
     createMissionLabel: $("#create-mission-label"),
+    currencyInput: $("#currency-input"),
     budgetInput: $("#budget-input"),
     rewardInput: $("#reward-input"),
     costTotal: $("#cost-total"),
@@ -103,8 +99,30 @@
     return Math.min(max, Math.max(min, value));
   }
 
-  function displayMoney(value) {
-    return money.format(finiteNumber(value));
+  function currencyFormatter(currency = "USD") {
+    const code = String(currency || "USD").toUpperCase();
+    if (!moneyFormatters.has(code)) {
+      try {
+        moneyFormatters.set(code, new Intl.NumberFormat("en-US", {
+          style: "currency",
+          currency: code,
+          minimumFractionDigits: 2,
+          maximumFractionDigits: 2,
+        }));
+      } catch {
+        moneyFormatters.set(code, new Intl.NumberFormat("en-US", {
+          style: "currency",
+          currency: "USD",
+          minimumFractionDigits: 2,
+          maximumFractionDigits: 2,
+        }));
+      }
+    }
+    return moneyFormatters.get(code);
+  }
+
+  function displayMoney(value, currency = "USD") {
+    return currencyFormatter(currency).format(finiteNumber(value));
   }
 
   function firstMinor(...values) {
@@ -116,9 +134,23 @@
     return null;
   }
 
-  function displayMinor(value, fallback = "—") {
+  function displayMinor(value, currency = "USD", fallback = "—") {
     const amount = firstMinor(value);
-    return amount === null ? fallback : displayMoney(amount / 100);
+    return amount === null ? fallback : displayMoney(amount / 100, currency);
+  }
+
+  function displayAsset(asset) {
+    if (!asset || typeof asset !== "object") return null;
+    const symbol = String(asset.symbol || asset.asset || "TOKEN");
+    const decimals = Number(asset.decimals);
+    const atomic = String(asset.amountAtomic ?? "");
+    if (!Number.isSafeInteger(decimals) || decimals < 0 || decimals > 30 || !/^\d+$/.test(atomic)) return null;
+    const padded = atomic.padStart(decimals + 1, "0");
+    const whole = decimals ? padded.slice(0, -decimals) : padded;
+    const rawFraction = decimals ? padded.slice(-decimals) : "";
+    const fraction = rawFraction.replace(/0+$/, "");
+    const amount = `${whole}${fraction ? `.${fraction}` : ""}`;
+    return `${amount} ${symbol} · ${atomic} atomic`;
   }
 
   function asObject(value) {
@@ -239,6 +271,7 @@
         total,
         spent: finiteNumber(mission?.spent),
         reward: finiteNumber(mission?.reward),
+        currency: String(mission?.currency ?? "USD").toUpperCase(),
       };
     }
     const hasMinorUnits = raw && (
@@ -251,12 +284,14 @@
         total: finiteNumber(raw.totalMinor) / 100,
         spent: finiteNumber(raw.spentMinor) / 100,
         reward: finiteNumber(raw.rewardMinor) / 100,
+        currency: String(raw.currency ?? raw.accountingCurrency ?? "USD").toUpperCase(),
       };
     }
     return {
       total: finiteNumber(raw?.total ?? raw?.maximum ?? raw?.max ?? mission?.maximumBudget),
       spent: finiteNumber(raw?.spent ?? raw?.used ?? mission?.spent),
       reward: finiteNumber(raw?.reward ?? raw?.bounty ?? mission?.reward),
+      currency: String(raw?.currency ?? mission?.currency ?? "USD").toUpperCase(),
     };
   }
 
@@ -376,28 +411,75 @@
       reward.maximumMinor,
       reward.maxMinor,
     ], [config.maximumReward, config.maxReward, reward.maximum, reward.max]));
-    const available = config.available !== false && config.enabled !== false && config.ready !== false;
-    return {
+    const fallbackRules = {
       minimumBudgetMinor,
       maximumBudgetMinor,
+      defaultBudgetMinor: configuredMinor(2000, [config.defaultBudgetMinor], [config.defaultBudget]),
       minimumRewardMinor,
       maximumRewardMinor,
+      defaultRewardMinor: configuredMinor(500, [config.defaultRewardMinor], [config.defaultReward]),
+    };
+    const catalog = asArray(config.currencyConfig?.supported).length
+      ? asArray(config.currencyConfig.supported)
+      : ["USD", "EUR", "GBP", "CAD", "AUD"].map((code) => ({ code, label: code, minorDigits: 2 }));
+    const supportedCurrencies = asArray(config.supportedCurrencies).length
+      ? asArray(config.supportedCurrencies).map((value) => String(value).toUpperCase())
+      : catalog.map((item) => String(item.code).toUpperCase());
+    const rainExternal = system.rain?.external === true;
+    const adapterCurrencies = asObject(config.adapterCurrencies);
+    const availableCurrencies = rainExternal && asArray(adapterCurrencies.rainSandbox).length
+      ? adapterCurrencies.rainSandbox.map((value) => String(value).toUpperCase())
+      : supportedCurrencies;
+    const requestedCurrency = String(elements.currencyInput?.value || config.currency || "USD").toUpperCase();
+    const currency = availableCurrencies.includes(requestedCurrency) ? requestedCurrency : availableCurrencies[0] || "USD";
+    const configuredCurrencyRules = asObject(asObject(config.currencyLimits)[currency]);
+    const rules = Object.keys(configuredCurrencyRules).length ? configuredCurrencyRules : fallbackRules;
+    const available = config.available !== false && config.enabled !== false && config.ready !== false;
+    return {
+      ...fallbackRules,
+      ...rules,
+      currency,
+      catalog,
+      supportedCurrencies,
+      availableCurrencies,
+      currencyMode: config.currencyConfig?.mode ?? "demo-fixed-not-market-rate",
+      currencyDisclaimer: config.currencyConfig?.disclaimer ?? "Fixed demo reference values; not live market rates.",
       available,
       unavailableReason: String(config.unavailableReason ?? config.message ?? "Mission creation is temporarily unavailable."),
     };
   }
 
+  function currencySymbol(currency) {
+    const parts = currencyFormatter(currency).formatToParts(0);
+    return parts.find((part) => part.type === "currency")?.value ?? currency;
+  }
+
   function configureMissionForm(system) {
     const policy = resolveMissionCreationPolicy(system);
     app.missionCreationPolicy = policy;
+    elements.currencyInput.innerHTML = policy.catalog.map((item) => {
+      const code = String(item.code).toUpperCase();
+      const disabled = !policy.availableCurrencies.includes(code);
+      return `<option value="${escapeHtml(code)}"${code === policy.currency ? " selected" : ""}${disabled ? " disabled" : ""}>${escapeHtml(`${code} — ${item.label || code}`)}${disabled ? " (not on active rail)" : ""}</option>`;
+    }).join("");
     const budgetHelp = $("#budget-help");
     const rewardHelp = $("#reward-help");
+    const currencyHelp = $("#currency-help");
+    const symbol = currencySymbol(policy.currency);
+    $("#budget-prefix").textContent = symbol;
+    $("#reward-prefix").textContent = symbol;
+    $("#budget-field-label").textContent = `Recovery service spend cap (${policy.currency})`;
+    $("#reward-field-label").textContent = `Recovery bounty (${policy.currency})`;
+    $$(".input-prefix", elements.missionForm).forEach((prefix) => {
+      prefix.style.setProperty("--prefix-padding", `${Math.max(25, 17 + symbol.length * 8)}px`);
+    });
     elements.budgetInput.min = inputMoney(policy.minimumBudgetMinor);
     elements.budgetInput.max = inputMoney(policy.maximumBudgetMinor);
     elements.rewardInput.min = inputMoney(policy.minimumRewardMinor);
     elements.rewardInput.max = inputMoney(policy.maximumRewardMinor);
-    budgetHelp.textContent = `Allowed range: ${displayMinor(policy.minimumBudgetMinor)}–${displayMinor(policy.maximumBudgetMinor)} for Rain/x402 archive access, discovery, and fees.`;
-    rewardHelp.textContent = `Allowed range: ${displayMinor(policy.minimumRewardMinor)}–${displayMinor(policy.maximumRewardMinor)}. Released through the configured Monad rail after verification.`;
+    budgetHelp.textContent = `Allowed range: ${displayMinor(policy.minimumBudgetMinor, policy.currency)}–${displayMinor(policy.maximumBudgetMinor, policy.currency)} for archive access, discovery, and fees.`;
+    rewardHelp.textContent = `Allowed range: ${displayMinor(policy.minimumRewardMinor, policy.currency)}–${displayMinor(policy.maximumRewardMinor, policy.currency)}. Monad settlement is modeled separately in USDC.`;
+    currencyHelp.textContent = `${policy.currencyMode === "demo-fixed-not-market-rate" ? "Fixed demo reference · not a market FX quote." : policy.currencyDisclaimer} Rain sandbox accepts USD; Monad x402 settles test USDC.`;
     if (!app.busy.has("create")) elements.createMissionButton.disabled = !policy.available;
     elements.createMissionButton.setAttribute("aria-disabled", String(!policy.available));
     elements.createMissionButton.title = policy.available ? "Create a bounded recovery mission" : policy.unavailableReason;
@@ -483,8 +565,12 @@
     elements.readinessSummary.textContent = needsAttention
       ? "A required adapter needs attention before a mission can run."
       : rainExternal
-        ? "Hybrid sandbox: Rain is external; Monad and x402 remain local/read-only."
-        : "Demo simulation: no external merchant or provider agents are contacted; no funds or chain writes occur.";
+        ? x402Live
+          ? "Hybrid sandbox/testnet: Rain sandbox and Monad x402 are external; bounty and marketplace actors remain local."
+          : "Hybrid sandbox: Rain is external; Monad bounty and x402 execution remain local/read-only."
+        : x402Live
+          ? "Monad testnet x402 is enabled for capped discovery; bounty and marketplace actors remain local."
+          : "Demo simulation: no external merchant or provider agents are contacted; no funds or chain writes occur.";
     elements.readinessItems.innerHTML = [
       readinessItem("Rain", rainStatus, rainDetail, !rainReady ? "attention" : rainExternal ? "sandbox" : "local"),
       readinessItem("Monad", monadStatus, monadDetail, monadWrites ? "testnet" : probePassed ? "ready" : "local"),
@@ -613,12 +699,20 @@
       const expiry = Date.parse(card.expiresAt ?? "");
       return ["active", "expiry_scheduled"].includes(state) && Number.isFinite(expiry) && expiry > Date.now();
     });
+    const reconciliationMission = asArray(app.data.missions).find((candidate) => (
+      asObject(candidate.externalOperations).x402Pending
+    ));
     const resetButton = $("#reset-demo");
     $("#next-step").disabled = app.busy.size > 0 || terminal;
     $("#run-demo").disabled = app.busy.size > 0 || terminal;
     $("#blocked-purchase").disabled = app.busy.size > 0;
-    resetButton.disabled = app.busy.size > 0 || Boolean(authorityMission);
-    if (authorityMission) {
+    resetButton.disabled = app.busy.size > 0 || Boolean(authorityMission) || Boolean(reconciliationMission);
+    if (reconciliationMission) {
+      const paymentId = reconciliationMission.externalOperations.x402Pending.paymentId || "unknown payment";
+      const resetMessage = `Reset unavailable until Monad x402 payment ${shorten(paymentId, 14, 8)} is reconciled.`;
+      resetButton.title = resetMessage;
+      resetButton.setAttribute("aria-label", resetMessage);
+    } else if (authorityMission) {
       const resetMessage = `Reset unavailable until the scoped Rain sandbox card expires ${formatInstant(authorityMission.rainCard.expiresAt)}.`;
       resetButton.title = resetMessage;
       resetButton.setAttribute("aria-label", resetMessage);
@@ -653,7 +747,8 @@
     const remaining = Math.max(0, budget.total - budget.spent);
     const stage = normalizeStage(mission);
     const financialExecution = asObject(app.data.system?.financialExecution);
-    const demoOnly = financialExecution.realFunds !== true;
+    const testnetTokensCanMove = financialExecution.testnetTokensCanMove === true;
+    const demoOnly = financialExecution.realFunds !== true && !testnetTokensCanMove;
     const networkedProviders = app.data.system?.recovery?.networkedProviders === true;
 
     $("#availability-value").textContent = `${availability}%`;
@@ -673,11 +768,19 @@
       : seeders === 1
         ? "Single recovery source"
         : "Artifact offline";
-    $("#budget-value").textContent = displayMoney(remaining);
-    if (elements.budgetLabel) elements.budgetLabel.textContent = demoOnly ? "Demo reserve remaining" : "Budget remaining";
+    $("#budget-value").textContent = displayMoney(remaining, budget.currency);
+    if (elements.budgetLabel) {
+      elements.budgetLabel.textContent = demoOnly
+        ? "Demo reserve remaining"
+        : testnetTokensCanMove
+          ? "Policy reserve remaining"
+          : "Budget remaining";
+    }
     $("#budget-detail").textContent = demoOnly
-      ? `${displayMoney(budget.spent)} simulated allocation · $0.00 charged`
-      : `${displayMoney(budget.spent)} spent · ${displayMoney(budget.reward)} bounty`;
+      ? `${displayMoney(budget.spent, budget.currency)} simulated allocation · no money charged`
+      : testnetTokensCanMove
+        ? `${displayMoney(budget.spent, budget.currency)} policy usage · discovery can settle in test USDC`
+        : `${displayMoney(budget.spent, budget.currency)} spent · ${displayMoney(budget.reward, budget.currency)} bounty`;
 
     if (stage === "RESEEDED") {
       $("#availability-value").textContent = "100%";
@@ -827,7 +930,7 @@
           ? "Rain sandbox authorization simulation · no real funds"
           : "Local card-policy simulation · no funds moved"
         : "Scoped card for legacy archive access",
-      idleAmount: demoOnly ? "$0.00 simulated" : "$0.00 spent",
+      idleAmount: demoOnly ? `${displayMoney(0, budget.currency)} simulated` : `${displayMoney(0, budget.currency)} spent`,
       amountSuffix: demoOnly ? " simulated" : " spent",
       failedSuffix: " blocked",
     });
@@ -849,8 +952,8 @@
       activeStateOverride: x402Live ? null : "Simulated locally",
       description: x402Live
         ? "Machine-native discovery micropayments"
-        : "Local HTTP 402 handshake · no funds settled",
-      idleAmount: x402Live ? "$0.00 settled" : "$0.00 simulated",
+        : "x402-shaped local handshake · no protocol payment or funds settled",
+      idleAmount: x402Live ? `${displayMoney(0, budget.currency)} settled` : `${displayMoney(0, budget.currency)} simulated`,
       amountSuffix: x402Live ? " settled" : " simulated",
     });
 
@@ -862,10 +965,13 @@
       : stage === "DEAD"
         ? monadWrites ? "Escrow ready" : "Local ledger ready"
         : monadWrites ? "Escrow funded" : "Local ledger funded";
+    const latestSettlement = displayAsset(monad?.settlementAsset);
+    const collateralRecord = latestMatching(transactions, ["claimbounty"]);
+    const collateral = displayAsset(collateralRecord?.collateralAsset);
     $("#monad-description").textContent = monad?.description ?? monad?.message ?? (monadWrites
       ? "Onchain bounty, collateral, and finality"
-      : "Local bounty ledger · no blockchain writes");
-    $("#monad-amount").textContent = `${displayMoney(budget.reward)} ${monadWrites ? "bounty" : "demo bounty"}`;
+      : `Local bounty ledger · no blockchain writes${collateral ? ` · ${collateral} collateral reference` : " · MON collateral amount not quantified"}`);
+    $("#monad-amount").textContent = `${displayMoney(budget.reward, budget.currency)} ${monadWrites ? "bounty value" : "demo bounty value"}${latestSettlement ? ` · latest ${latestSettlement}` : ""}`;
     $("#monad-reference").textContent = shorten(recordReference(monad) === "No receipt" ? (monadWrites ? "Monad network" : "Local simulation") : recordReference(monad), 9, 6);
     $("#monad-reference").title = String(recordReference(monad));
   }
@@ -878,9 +984,13 @@
     $(`#${prefix}-state`).textContent = record
       ? failed ? "Policy blocked" : options.activeStateOverride ?? recordStatus(record, options.activeState)
       : options.idleState;
-    $(`#${prefix}-description`).textContent = record?.description ?? record?.message ?? options.description;
+    const settlement = displayAsset(record?.settlementAsset);
+    const baseDescription = record?.description ?? record?.message ?? options.description;
+    $(`#${prefix}-description`).textContent = settlement
+      ? `${baseDescription} · ${settlement} settlement reference`
+      : baseDescription;
     $(`#${prefix}-amount`).textContent = record
-      ? `${displayMoney(recordAmount(record))}${failed ? options.failedSuffix ?? options.amountSuffix : options.amountSuffix}`
+      ? `${displayMoney(recordAmount(record), record.currency || "USD")}${failed ? options.failedSuffix ?? options.amountSuffix : options.amountSuffix}${settlement ? ` → ${settlement}` : ""}`
       : options.idleAmount;
     const reference = recordReference(record);
     $(`#${prefix}-reference`).textContent = shorten(reference, 9, 5);
@@ -1150,6 +1260,7 @@
       : negotiation.decision;
     const sessionId = negotiation.sessionId ?? "Not opened";
     const quoteId = quote?.quoteId ?? "Not issued";
+    const dealCurrency = String(quote?.currency ?? negotiation.allowedCurrencies?.[0] ?? mission.budget?.currency ?? "USD").toUpperCase();
     const negotiationRuntime = asObject(app.data.system?.negotiation);
     const actorRuntime = asObject(app.data.system?.actors);
     const buyerActor = asObject(actorRuntime.buyer);
@@ -1171,7 +1282,7 @@
           <li class="deal-transcript-entry is-${escapeHtml(entry.party)}">
             <span class="deal-speaker"><i aria-hidden="true"></i>${escapeHtml(entry.speaker)}</span>
             <span class="deal-message">${escapeHtml(entry.message)}</span>
-            <strong>${displayMinor(entry.amountMinor)}</strong>
+            <strong>${displayMinor(entry.amountMinor, dealCurrency)}</strong>
           </li>
         `).join("")}</ol>`
       : `<p class="deal-placeholder">No offers have been recorded.</p>`;
@@ -1188,11 +1299,11 @@
             <span>${liveMerchant ? "External merchant session" : "Simulated negotiation"}</span>
             <em class="audit-state${failed ? " is-blocked" : pending ? " is-pending" : ""}">${escapeHtml(titleCase(status))}</em>
           </div>
-          <div class="deal-price-flow" aria-label="Initial ask ${escapeHtml(displayMinor(askMinor))}, accepted amount ${escapeHtml(displayMinor(acceptedMinor))}, savings ${escapeHtml(displayMinor(savingsMinor))} or ${escapeHtml(savingsPercent)}">
-            <div><small>Initial ask</small><strong>${displayMinor(askMinor)}</strong></div>
+          <div class="deal-price-flow" aria-label="Initial ask ${escapeHtml(displayMinor(askMinor, dealCurrency))}, accepted amount ${escapeHtml(displayMinor(acceptedMinor, dealCurrency))}, savings ${escapeHtml(displayMinor(savingsMinor, dealCurrency))} or ${escapeHtml(savingsPercent)}">
+            <div><small>Initial ask</small><strong>${displayMinor(askMinor, dealCurrency)}</strong></div>
             <span class="deal-arrow" aria-hidden="true">→</span>
-            <div class="is-accepted"><small>Accepted</small><strong>${displayMinor(acceptedMinor)}</strong></div>
-            <div class="deal-savings"><small>Negotiated savings</small><strong>${displayMinor(savingsMinor)} <span>· ${escapeHtml(savingsPercent)}</span></strong></div>
+            <div class="is-accepted"><small>Accepted</small><strong>${displayMinor(acceptedMinor, dealCurrency)}</strong></div>
+            <div class="deal-savings"><small>Negotiated savings</small><strong>${displayMinor(savingsMinor, dealCurrency)} <span>· ${escapeHtml(savingsPercent)}</span></strong></div>
           </div>
           <dl class="deal-meta">
             <div><dt>Seller</dt><dd>${escapeHtml(merchantName)}</dd></div>
@@ -1326,13 +1437,27 @@
   function renderPolicyAudit(mission) {
     const policy = mission.policy && typeof mission.policy === "object" ? mission.policy : {};
     const budget = budgetFor(mission);
+    const pendingX402 = asObject(asObject(mission.externalOperations).x402Pending);
     const rows = [
       ["Rights basis", policy.license ?? policy.rightsBasis ?? policy.licenseClass ?? "Authorized content"],
       ["Rights attestation", policy.rightsAttested ?? policy.rightsConfirmed ?? mission.rightsConfirmed ?? true ? "Present" : "Required"],
-      ["Maximum exposure", displayMoney(policy.maxSpend ?? policy.maximumAmount ?? budget.total)],
+      ["Service spend cap", displayMoney(policy.maxSpend ?? policy.maximumAmount ?? budget.total, budget.currency)],
+      ["Provider bounty", displayMoney(budget.reward, budget.currency)],
+      ["Maximum authorized exposure", displayMoney(budget.total + budget.reward, budget.currency)],
+      ["Accounting currency", budget.currency],
+      [
+        "Rail settlement",
+        mission.rainCard?.mode === "rain-sandbox"
+          ? "Rain sandbox: USD only · Monad x402: USDC · gas/collateral: MON"
+          : `Local scoped-card model: ${budget.currency} (no settlement) · Rain sandbox: USD only · Monad: USDC reference · MON collateral unquantified`,
+      ],
       ["Allowed rails", policy.allowedRails ?? ["Rain", "Monad", "x402"]],
       ["Merchant scope", policy.allowedMerchants ?? policy.allowedMerchantIds ?? "Approved archives only"],
       ["Card lifecycle", policy.cardLifecycle ?? "Single use · auto-freeze"],
+      ...(pendingX402.paymentId ? [[
+        "x402 payment state",
+        `Reconciliation required · ${shorten(pendingX402.paymentId, 14, 8)}`,
+      ]] : []),
       ["Content root", shorten(mission.contentRoot ?? mission.contentRootSha256 ?? "Not committed", 13, 8)],
     ];
     $("#audit-content").innerHTML = `<dl class="policy-list">${rows.map(([key, rawValue]) => {
@@ -1511,9 +1636,36 @@
     const total = Math.max(0, finiteNumber(elements.budgetInput.value));
     const reward = Math.max(0, finiteNumber(elements.rewardInput.value));
     const maximumExposure = total + reward;
-    elements.costTotal.textContent = displayMoney(maximumExposure);
-    elements.costReward.textContent = displayMoney(reward);
-    elements.costReserve.textContent = `Up to ${displayMoney(total)}`;
+    const currency = app.missionCreationPolicy.currency || elements.currencyInput?.value || "USD";
+    elements.costTotal.textContent = displayMoney(maximumExposure, currency);
+    elements.costReward.textContent = displayMoney(reward, currency);
+    elements.costReserve.textContent = `Up to ${displayMoney(total, currency)}`;
+  }
+
+  function currencyMetadata(code, policy = app.missionCreationPolicy) {
+    return asArray(policy.catalog).find((item) => String(item.code).toUpperCase() === String(code).toUpperCase()) ?? null;
+  }
+
+  function convertInputCurrency(value, fromCurrency, toCurrency) {
+    const from = currencyMetadata(fromCurrency);
+    const to = currencyMetadata(toCurrency);
+    const numeric = Math.max(0, finiteNumber(value));
+    if (!from?.minorPerUsd || !to?.minorPerUsd) return numeric;
+    const fromMinor = Math.round(numeric * 100);
+    const usdMinor = Math.round((fromMinor * 100) / Number(from.minorPerUsd));
+    return Math.round((usdMinor * Number(to.minorPerUsd)) / 100) / 100;
+  }
+
+  function handleCurrencyChange(nextCurrency) {
+    const previousPolicy = app.missionCreationPolicy;
+    const previousCurrency = previousPolicy.currency || "USD";
+    const next = String(nextCurrency || "USD").toUpperCase();
+    const nextBudget = convertInputCurrency(elements.budgetInput.value, previousCurrency, next);
+    const nextReward = convertInputCurrency(elements.rewardInput.value, previousCurrency, next);
+    configureMissionForm(app.data.system ?? {});
+    elements.budgetInput.value = nextBudget.toFixed(2);
+    elements.rewardInput.value = nextReward.toFixed(2);
+    updateCostPreview();
   }
 
   function fieldElement(name) {
@@ -1558,7 +1710,7 @@
   }
 
   function clearMissionValidation() {
-    ["title", "budget", "reward", "rightsConfirmed"].forEach(clearFieldError);
+    ["title", "currency", "budget", "reward", "rightsConfirmed"].forEach(clearFieldError);
     clearMissionFormError();
   }
 
@@ -1572,6 +1724,7 @@
 
     const formData = new FormData(elements.missionForm);
     const title = String(formData.get("title") ?? "").trim();
+    const currency = String(formData.get("currency") ?? policy.currency ?? "USD").toUpperCase();
     const budgetValue = Number(formData.get("budget"));
     const rewardValue = Number(formData.get("reward"));
     const budgetMinor = Number.isFinite(budgetValue) ? Math.round(budgetValue * 100) : Number.NaN;
@@ -1581,18 +1734,18 @@
 
     if (!title) issues.push(["title", "Enter a short, recognizable artifact title."]);
     if (!Number.isSafeInteger(budgetMinor)) {
-      issues.push(["budget", "Enter a valid mission budget in USD."]);
+      issues.push(["budget", `Enter a valid mission budget in ${currency}.`]);
     } else if (Math.abs(budgetValue * 100 - budgetMinor) > 0.0001) {
-      issues.push(["budget", "Use no more than two decimal places for USD."]);
+      issues.push(["budget", `Use no more than two decimal places for ${currency}.`]);
     } else if (budgetMinor < policy.minimumBudgetMinor || budgetMinor > policy.maximumBudgetMinor) {
-      issues.push(["budget", `Budget must be between ${displayMinor(policy.minimumBudgetMinor)} and ${displayMinor(policy.maximumBudgetMinor)}.`]);
+      issues.push(["budget", `Budget must be between ${displayMinor(policy.minimumBudgetMinor, currency)} and ${displayMinor(policy.maximumBudgetMinor, currency)}.`]);
     }
     if (!Number.isSafeInteger(rewardMinor)) {
-      issues.push(["reward", "Enter a valid recovery bounty in USD."]);
+      issues.push(["reward", `Enter a valid recovery bounty in ${currency}.`]);
     } else if (Math.abs(rewardValue * 100 - rewardMinor) > 0.0001) {
-      issues.push(["reward", "Use no more than two decimal places for USD."]);
+      issues.push(["reward", `Use no more than two decimal places for ${currency}.`]);
     } else if (rewardMinor < policy.minimumRewardMinor || rewardMinor > policy.maximumRewardMinor) {
-      issues.push(["reward", `Recovery bounty must be between ${displayMinor(policy.minimumRewardMinor)} and ${displayMinor(policy.maximumRewardMinor)}.`]);
+      issues.push(["reward", `Recovery bounty must be between ${displayMinor(policy.minimumRewardMinor, currency)} and ${displayMinor(policy.maximumRewardMinor, currency)}.`]);
     }
     if (!rightsConfirmed) issues.push(["rightsConfirmed", "Confirm that you have the right to recover and reseed this artifact."]);
 
@@ -1612,6 +1765,7 @@
       reward: rewardMinor / 100,
       budgetMinor,
       rewardMinor,
+      currency,
       rightsConfirmed,
     };
   }
@@ -1626,16 +1780,21 @@
       : typeof errorObject.message === "string" && errorObject.message.trim()
         ? errorObject.message.trim()
         : "";
-    const explicitField = payload.field ?? errorObject.field;
+    const rawField = payload.field ?? errorObject.field;
+    const explicitField = rawField === "rewardMinor"
+      ? "reward"
+      : rawField === "totalBudgetMinor"
+        ? "budget"
+        : rawField;
     if (serverMessage) return { message: serverMessage, field: explicitField || null };
     if (/RIGHTS.*ATTESTATION|RIGHTS.*REQUIRED/.test(code)) {
       return { field: "rightsConfirmed", message: "Confirm that you have the right to recover and reseed this artifact." };
     }
     if (/MINIMUM.*BUDGET|BUDGET.*MINIMUM|BUDGET.*BELOW/.test(code)) {
-      return { field: "budget", message: `Mission budget must be at least ${displayMinor(app.missionCreationPolicy.minimumBudgetMinor)}.` };
+      return { field: "budget", message: `Mission budget must be at least ${displayMinor(app.missionCreationPolicy.minimumBudgetMinor, app.missionCreationPolicy.currency)}.` };
     }
     if (/MAXIMUM.*BUDGET|BUDGET.*MAXIMUM|BUDGET.*ABOVE/.test(code)) {
-      return { field: "budget", message: `Mission budget cannot exceed ${displayMinor(app.missionCreationPolicy.maximumBudgetMinor)}.` };
+      return { field: "budget", message: `Mission budget cannot exceed ${displayMinor(app.missionCreationPolicy.maximumBudgetMinor, app.missionCreationPolicy.currency)}.` };
     }
     if (error?.status === 403) {
       return { field: null, message: "This request was blocked by the local security policy. Reload the app from its server URL and retry." };
@@ -1668,8 +1827,9 @@
       pieceCount,
       totalPieces: pieceCount,
       pieces: { total: pieceCount, recovered: 0, verified: 0 },
-      budget: { total: values.totalBudget, spent: 0, reward: values.reward },
+      budget: { total: values.totalBudget, spent: 0, reward: values.reward, currency: values.currency },
       reward: values.reward,
+      currency: values.currency,
       license,
       rightsConfirmed: values.rightsConfirmed,
       rightsAttestation: values.rightsConfirmed,
@@ -1683,7 +1843,7 @@
         allowedMerchants: ["approved-archives", "approved-storage"],
         maxSpend: values.totalBudget,
         maximumAmount: values.totalBudget,
-        currency: "USD",
+        currency: values.currency,
         cardLifecycle: "single-use-auto-freeze",
         environment,
       },
@@ -1705,6 +1865,7 @@
       closeMissionDialog();
       elements.missionForm.reset();
       clearMissionValidation();
+      configureMissionForm(app.data.system ?? {});
       updateCostPreview();
       showToast("Mission secured", "Artifact commitment accepted. The bounded recovery budget is ready.");
       announce("New recovery mission created");
@@ -1887,7 +2048,8 @@
       const fieldName = event.target?.name;
       if (fieldName) clearFieldError(fieldName);
       clearMissionFormError();
-      if (fieldName === "budget" || fieldName === "reward") updateCostPreview();
+      if (fieldName === "currency") handleCurrencyChange(event.target.value);
+      else if (fieldName === "budget" || fieldName === "reward") updateCostPreview();
     });
 
     elements.dialog.addEventListener("click", (event) => {

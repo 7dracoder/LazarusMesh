@@ -11,6 +11,8 @@ LuVM/dGDC9UpulF+UwIDAQAB
 -----END PUBLIC KEY-----`;
 
 const SANDBOX_KEY_FINGERPRINT = '7aff30e44d882435b7d3c8fd4fdcaa2d9b5a796e3c04160fa0678697ce6a188e';
+const RAIN_SANDBOX_ORIGIN = 'https://api-dev.raincards.xyz';
+const MAX_RESPONSE_BYTES = 64 * 1024;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 class RainSandboxError extends Error {
@@ -76,6 +78,7 @@ function cardDecision(card, purchase, now) {
   if (!card) return 'CARD_NOT_FOUND';
   if (card.state !== 'active') return 'CARD_INACTIVE';
   if (!Number.isSafeInteger(purchase.amountMinor) || purchase.amountMinor <= 0) return 'INVALID_AMOUNT';
+  if (String(purchase.currency || card.currency || 'USD').toUpperCase() !== card.currency) return 'CURRENCY_MISMATCH';
   if (new Date(card.expiresAt).getTime() <= now.getTime()) return 'CARD_EXPIRED';
   if (card.transactionCount >= card.maxTransactions) return 'TRANSACTION_COUNT_EXCEEDED';
   if (purchase.amountMinor > card.maximumAmountMinor) return 'AMOUNT_LIMIT_EXCEEDED';
@@ -92,6 +95,118 @@ function safeProviderCode(payload, fallback) {
     : fallback;
 }
 
+function timeoutError() {
+  return new RainSandboxError('RAIN_TIMEOUT', 'Rain sandbox request timed out.', { retryable: true });
+}
+
+function responseReadError() {
+  return new RainSandboxError(
+    'RAIN_RESPONSE_READ_FAILED',
+    'Rain sandbox response body could not be read.',
+    { retryable: true },
+  );
+}
+
+function readChunk(reader, signal) {
+  if (signal.aborted) return Promise.reject(timeoutError());
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const finish = (callback, value) => {
+      if (settled) return;
+      settled = true;
+      signal.removeEventListener('abort', onAbort);
+      callback(value);
+    };
+    const onAbort = () => {
+      try {
+        Promise.resolve(reader.cancel()).catch(() => {});
+      } catch {
+        // The timeout result remains authoritative even if cancellation fails.
+      }
+      finish(reject, timeoutError());
+    };
+    signal.addEventListener('abort', onAbort, { once: true });
+    Promise.resolve()
+      .then(() => reader.read())
+      .then(
+        (result) => finish(resolve, result),
+        (error) => finish(
+          reject,
+          signal.aborted || error?.name === 'AbortError' ? timeoutError() : responseReadError(),
+        ),
+      );
+  });
+}
+
+async function readResponsePayload(response, signal) {
+  const contentLength = response.headers?.get?.('content-length');
+  if (typeof contentLength === 'string' && /^\d+$/.test(contentLength.trim())) {
+    if (BigInt(contentLength.trim()) > BigInt(MAX_RESPONSE_BYTES)) {
+      try {
+        Promise.resolve(response.body?.cancel?.()).catch(() => {});
+      } catch {
+        // Size rejection remains authoritative even if cancellation fails.
+      }
+      throw new RainSandboxError(
+        'RAIN_RESPONSE_TOO_LARGE',
+        'Rain sandbox response exceeded the allowed size.',
+      );
+    }
+  }
+
+  if (response.body === null) return null;
+  if (!response.body || typeof response.body.getReader !== 'function') {
+    throw new RainSandboxError(
+      'RAIN_RESPONSE_STREAM_UNAVAILABLE',
+      'Rain sandbox response did not provide a readable body stream.',
+    );
+  }
+
+  const reader = response.body.getReader();
+  const chunks = [];
+  let totalBytes = 0;
+  try {
+    while (true) {
+      const { done, value } = await readChunk(reader, signal);
+      if (done) break;
+      if (!(value instanceof Uint8Array)) throw responseReadError();
+      totalBytes += value.byteLength;
+      if (totalBytes > MAX_RESPONSE_BYTES) {
+        try {
+          Promise.resolve(reader.cancel()).catch(() => {});
+        } catch {
+          // Size rejection remains authoritative even if cancellation fails.
+        }
+        throw new RainSandboxError(
+          'RAIN_RESPONSE_TOO_LARGE',
+          'Rain sandbox response exceeded the allowed size.',
+        );
+      }
+      chunks.push(Buffer.from(value));
+    }
+  } finally {
+    try {
+      reader.releaseLock();
+    } catch {
+      // A cancelled or errored stream may already have released its lock.
+    }
+  }
+
+  if (totalBytes === 0) return null;
+  const text = Buffer.concat(chunks, totalBytes).toString('utf8');
+  try {
+    return JSON.parse(text);
+  } catch {
+    // An error response may legitimately be plain text. Preserve its HTTP
+    // status so retry and client-error handling remain deterministic.
+    if (!response.ok) return null;
+    throw new RainSandboxError(
+      'RAIN_INVALID_JSON_RESPONSE',
+      'Rain sandbox returned an invalid JSON response.',
+    );
+  }
+}
+
 class RainSandboxAdapter {
   constructor({
     baseUrl,
@@ -99,13 +214,18 @@ class RainSandboxAdapter {
     userId,
     teamId = null,
     contractId,
-    autoFundMinor = 2000,
+    autoFundMinor = 0,
     timeoutMs = 12_000,
     fetchImpl = globalThis.fetch,
     clock = () => new Date(),
+    allowedOrigin = RAIN_SANDBOX_ORIGIN,
   } = {}) {
     if (typeof baseUrl !== 'string' || !baseUrl.startsWith('https://')) {
       throw new RainSandboxError('RAIN_INVALID_CONFIGURATION', 'Rain sandbox base URL must use HTTPS.', { statusCode: 500 });
+    }
+    const parsedBaseUrl = new URL(baseUrl);
+    if (parsedBaseUrl.origin !== allowedOrigin) {
+      throw new RainSandboxError('RAIN_INVALID_CONFIGURATION', 'Rain sandbox API origin is not allowlisted.', { statusCode: 500 });
     }
     if (typeof apiKey !== 'string' || apiKey.trim().length < 16) {
       throw new RainSandboxError('RAIN_INVALID_CONFIGURATION', 'Rain sandbox API key is required.', { statusCode: 500 });
@@ -121,7 +241,7 @@ class RainSandboxAdapter {
     }
 
     this.baseUrl = baseUrl.replace(/\/+$/, '');
-    this.baseOrigin = new URL(this.baseUrl).origin;
+    this.baseOrigin = parsedBaseUrl.origin;
     this.apiKey = apiKey;
     this.userId = userId;
     this.teamId = teamId;
@@ -152,6 +272,7 @@ class RainSandboxAdapter {
     for (let attempt = 0; attempt <= retries; attempt += 1) {
       let url = initialUrl;
       let response;
+      let payload;
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
       try {
@@ -179,14 +300,22 @@ class RainSandboxAdapter {
           url = redirected;
           if (redirects === 3) throw new RainSandboxError('RAIN_TOO_MANY_REDIRECTS', 'Too many Rain redirects.');
         }
+        payload = await readResponsePayload(response, controller.signal);
       } catch (error) {
-        clearTimeout(timeout);
-        if (error instanceof RainSandboxError) throw error;
+        if (error instanceof RainSandboxError) {
+          if (error.retryable && attempt < retries) {
+            clearTimeout(timeout);
+            await new Promise((resolve) => setTimeout(resolve, 100 * (2 ** attempt)));
+            continue;
+          }
+          throw error;
+        }
         if (attempt < retries) {
+          clearTimeout(timeout);
           await new Promise((resolve) => setTimeout(resolve, 100 * (2 ** attempt)));
           continue;
         }
-        const aborted = error?.name === 'AbortError';
+        const aborted = controller.signal.aborted || error?.name === 'AbortError';
         throw new RainSandboxError(
           aborted ? 'RAIN_TIMEOUT' : 'RAIN_NETWORK_ERROR',
           aborted ? 'Rain sandbox request timed out.' : 'Rain sandbox request failed.',
@@ -194,14 +323,6 @@ class RainSandboxAdapter {
         );
       } finally {
         clearTimeout(timeout);
-      }
-
-      let payload = null;
-      try {
-        const text = await response.text();
-        payload = text ? JSON.parse(text) : null;
-      } catch {
-        payload = null;
       }
 
       if (response.ok) return { payload, status: response.status, headers: response.headers };
@@ -242,6 +363,10 @@ class RainSandboxAdapter {
       currency: 'rUSD',
       transactionId: payload?.transactionId || null,
       mode: this.mode,
+      sandbox: true,
+      synthetic: false,
+      fundsMoved: false,
+      externalEndpoint: true,
     };
   }
 
@@ -259,6 +384,10 @@ class RainSandboxAdapter {
   async createScopedCard(policy) {
     if (!policy?.missionId || !policy?.principalId) {
       throw new RainSandboxError('RAIN_INVALID_REQUEST', 'Mission and principal are required.', { statusCode: 422 });
+    }
+    const currency = String(policy.currency || 'USD').trim().toUpperCase();
+    if (currency !== 'USD') {
+      throw new RainSandboxError('RAIL_CURRENCY_UNSUPPORTED', 'Rain sandbox scoped cards authorize USD only.', { statusCode: 422 });
     }
     assertPositiveMinor(policy.maximumAmountMinor, 'maximumAmountMinor');
     if (!Number.isSafeInteger(policy.maxTransactions) || policy.maxTransactions <= 0) {
@@ -295,7 +424,12 @@ class RainSandboxAdapter {
       extraHeaders: { sessionid: sessionId },
       body,
     });
-    if (!payload || !UUID_PATTERN.test(payload.id) || typeof payload.last4 !== 'string') {
+    if (
+      !payload ||
+      !UUID_PATTERN.test(payload.id) ||
+      !/^\d{4}$/.test(payload.last4) ||
+      payload.status !== 'active'
+    ) {
       throw new RainSandboxError('RAIN_INVALID_RESPONSE', 'Rain returned an invalid scoped-card response.');
     }
 
@@ -305,12 +439,13 @@ class RainSandboxAdapter {
       cardId: payload.id,
       principalId: policy.principalId,
       missionId: policy.missionId,
-      state: payload.status === 'active' ? 'active' : String(payload.status || 'active'),
-      remoteState: String(payload.status || 'active'),
+      state: 'active',
+      remoteState: 'active',
       lastFour: payload.last4,
       allowedMerchantIds: Object.freeze([...policy.allowedMerchantIds]),
       allowedMccs: Object.freeze([...policy.allowedMccs]),
       maximumAmountMinor: policy.maximumAmountMinor,
+      currency,
       maxTransactions: policy.maxTransactions,
       transactionCount: 0,
       expiresAt: expiry.toISOString(),
@@ -318,6 +453,10 @@ class RainSandboxAdapter {
       quoteId: policy.quoteId || null,
       createdAt: this.clock().toISOString(),
       mode: this.mode,
+      sandbox: true,
+      synthetic: false,
+      fundsMoved: false,
+      externalEndpoint: true,
       enforcement: {
         amount: 'rain-buffered-plus-application-exact',
         mcc: 'rain-sandbox',
@@ -351,9 +490,13 @@ class RainSandboxAdapter {
         merchantName: purchase.merchantName,
         mcc: purchase.mcc,
         amountMinor: purchase.amountMinor,
-        currency: purchase.currency || 'USD',
+        currency: card?.currency || String(purchase.currency || 'USD').toUpperCase(),
         checkedAt,
         mode: this.mode,
+        sandbox: true,
+        synthetic: false,
+        fundsMoved: false,
+        externalEndpoint: false,
         remoteAttempted: false,
       };
     }
@@ -365,6 +508,8 @@ class RainSandboxAdapter {
       purchase.merchantId || '',
       purchase.mcc || '',
       purchase.amountMinor,
+      card.currency,
+      purchase.merchantName || '',
     );
     const { payload } = await this.request('/simulate/transactions/authorize', {
       method: 'POST',
@@ -372,7 +517,7 @@ class RainSandboxAdapter {
       body: {
         cardId,
         amount: purchase.amountMinor,
-        currency: purchase.currency || 'USD',
+        currency: 'USD',
         merchantName: purchase.merchantName,
         merchantCategoryCode: purchase.mcc,
       },
@@ -388,11 +533,18 @@ class RainSandboxAdapter {
 
     if (exerciseRemoteControl && remoteAuthorized) {
       remoteControlUnexpected = true;
-      await this.request(`/simulate/transactions/${encodeURIComponent(payload.transactionId)}/reverse`, {
+      const reversal = await this.request(`/simulate/transactions/${encodeURIComponent(payload.transactionId)}/reverse`, {
         method: 'POST',
         idempotency: idempotencyKey('rain-reversal-v1', payload.transactionId),
         body: {},
       });
+      if (
+        !reversal.payload ||
+        reversal.payload.transactionId !== payload.transactionId ||
+        reversal.payload.status !== 'reversed'
+      ) {
+        throw new RainSandboxError('RAIN_INVALID_RESPONSE', 'Rain returned invalid reversal evidence.');
+      }
       finalStatus = 'reversed';
     } else if (applicationCode === 'AUTHORIZED' && payload.status === 'authorized' && purchase.settle !== false) {
       const settlement = await this.request(`/simulate/transactions/${encodeURIComponent(payload.transactionId)}/settle`, {
@@ -402,19 +554,31 @@ class RainSandboxAdapter {
         // validator requires the optional settlement amount to be explicit.
         body: { amount: purchase.amountMinor },
       });
-      finalStatus = settlement.payload?.status || 'settled';
-      completionReason = settlement.payload?.completionReason || completionReason;
+      if (
+        !settlement.payload ||
+        settlement.payload.transactionId !== payload.transactionId ||
+        settlement.payload.status !== 'settled'
+      ) {
+        throw new RainSandboxError('RAIN_INVALID_RESPONSE', 'Rain returned invalid settlement evidence.');
+      }
+      finalStatus = settlement.payload.status;
+      completionReason = settlement.payload.completionReason || completionReason;
     }
 
     const authorized = applicationCode === 'AUTHORIZED' && remoteAuthorized;
     if (authorized) card.transactionCount += 1;
     const rainDeclinedReason = payload.declinedReason || null;
+    const resultCode = authorized
+      ? 'AUTHORIZED'
+      : applicationCode === 'AUTHORIZED'
+        ? 'RAIN_DECLINED'
+        : applicationCode;
     return {
       transactionId: payload.transactionId,
       cardId,
       authorized,
       status: authorized ? finalStatus : 'declined',
-      code: authorized ? 'AUTHORIZED' : applicationCode,
+      code: resultCode,
       applicationCode,
       rainStatus: payload.status,
       rainDeclinedReason,
@@ -424,10 +588,14 @@ class RainSandboxAdapter {
       merchantName: purchase.merchantName,
       mcc: purchase.mcc,
       amountMinor: purchase.amountMinor,
-      currency: purchase.currency || 'USD',
+      currency: card.currency,
       checkedAt,
       quoteId: purchase.quoteId || null,
       mode: this.mode,
+      sandbox: true,
+      synthetic: false,
+      fundsMoved: false,
+      externalEndpoint: true,
       remoteAttempted: true,
     };
   }
@@ -446,6 +614,47 @@ class RainSandboxAdapter {
     const { payload } = await this.request(`/issuing/cards/${encodeURIComponent(cardId)}`, { retries: 0 });
     if (payload?.status) local.remoteState = payload.status;
     return structuredClone(local);
+  }
+
+  restoreCard(card) {
+    if (!card || !UUID_PATTERN.test(card.cardId)) {
+      throw new RainSandboxError('RAIN_INVALID_RESTORED_CARD', 'Stored Rain card data is invalid.', { statusCode: 500 });
+    }
+    if (card.mode !== this.mode || String(card.currency || '').toUpperCase() !== 'USD') {
+      throw new RainSandboxError('RAIN_INVALID_RESTORED_CARD', 'Stored Rain card currency must be USD.', { statusCode: 500 });
+    }
+    assertPositiveMinor(card.maximumAmountMinor, 'maximumAmountMinor');
+    if (!Number.isSafeInteger(card.maxTransactions) || card.maxTransactions <= 0) {
+      throw new RainSandboxError('RAIN_INVALID_RESTORED_CARD', 'Stored Rain transaction limit is invalid.', { statusCode: 500 });
+    }
+    assertStringArray(card.allowedMerchantIds, 'allowedMerchantIds');
+    assertStringArray(card.allowedMccs, 'allowedMccs');
+    if (card.allowedMccs.some((mcc) => !/^\d{4}$/.test(mcc))) {
+      throw new RainSandboxError('RAIN_INVALID_RESTORED_CARD', 'Stored Rain MCC scope is invalid.', { statusCode: 500 });
+    }
+    if (!['active', 'expiry_scheduled'].includes(card.state)) {
+      throw new RainSandboxError('RAIN_INVALID_RESTORED_CARD', 'Stored Rain card state is invalid.', { statusCode: 500 });
+    }
+    const expiry = new Date(card.expiresAt);
+    if (!Number.isFinite(expiry.getTime()) || expiry.getTime() <= this.clock().getTime()) {
+      throw new RainSandboxError('RAIN_INVALID_RESTORED_CARD', 'Stored Rain card expiry must be in the future.', { statusCode: 500 });
+    }
+    if (
+      !Number.isSafeInteger(card.transactionCount) ||
+      card.transactionCount < 0 ||
+      card.transactionCount > card.maxTransactions
+    ) {
+      throw new RainSandboxError('RAIN_INVALID_RESTORED_CARD', 'Stored Rain transaction count is invalid.', { statusCode: 500 });
+    }
+    const restored = {
+      ...structuredClone(card),
+      currency: 'USD',
+      allowedMerchantIds: Object.freeze([...card.allowedMerchantIds]),
+      allowedMccs: Object.freeze([...card.allowedMccs]),
+      expiresAt: expiry.toISOString(),
+    };
+    this.cards.set(restored.cardId, restored);
+    return structuredClone(restored);
   }
 }
 

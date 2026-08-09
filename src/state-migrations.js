@@ -1,6 +1,9 @@
 "use strict";
 
-const ACTOR_TRANSPARENCY_SCHEMA_VERSION = 2;
+const { currencyInfo, normalizeCurrency } = require("./domain/currency");
+
+const STATE_SCHEMA_VERSION = 3;
+const MONAD_USDC_TESTNET = "0x534b2f3A21130d7a60830c2Df862319e593943A3";
 
 function object(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : {};
@@ -78,11 +81,45 @@ function rewriteLegacyEvent(event, mission) {
   return Object.assign(event, replacements[event.title] || {});
 }
 
-function migrateMission(mission, system) {
+function migrateMission(mission, system, sourceSchemaVersion) {
   if (!mission || typeof mission !== "object") return mission;
   const merchantLive = system.negotiation?.ready === true;
   const providerLive = system.recovery?.networkedProviders === true;
   const verifiersLive = system.actors?.verifiers?.connected === true;
+  const budgetCurrency = normalizeCurrency(mission.budget?.currency || "USD", "");
+  if (!budgetCurrency) {
+    const error = new Error("Stored mission uses an unsupported accounting currency.");
+    error.code = "PERSISTED_STATE_CURRENCY_NOT_SUPPORTED";
+    throw error;
+  }
+  const currencyMetadata = currencyInfo(budgetCurrency);
+  const hasExternalExecutionEvidence = mission.rainCard?.mode === "rain-sandbox"
+    || (Array.isArray(mission.payments) && mission.payments.some((payment) => (
+      payment?.externalEndpoint === true || payment?.mode === "rain-sandbox" || payment?.mode === "monad-testnet"
+    )))
+    || (Array.isArray(mission.transactions) && mission.transactions.some((transaction) => (
+      transaction?.externalEndpoint === true || transaction?.details?.externalEndpoint === true
+    )));
+  if (mission.budget && typeof mission.budget === "object") {
+    mission.budget.currency = budgetCurrency;
+    mission.budget.accountingCurrency = budgetCurrency;
+    mission.budget.exponent = currencyMetadata.minorDigits;
+    mission.budget.currencyRateSet ||= "lazarus-demo-reference-v1";
+    mission.budget.fx = {
+      ...object(mission.budget.fx),
+      mode: "demo-fixed-not-market-rate",
+      rateSet: mission.budget.currencyRateSet,
+      referenceCurrency: "USD",
+      minorPerUsd: currencyMetadata.minorPerUsd,
+    };
+    mission.budget.railSettlement = {
+      ...object(mission.budget.railSettlement),
+      rain: { currency: "USD", mode: "sandbox-card-authorization" },
+      localScopedCard: { currency: budgetCurrency, mode: "simulation" },
+      monad: { asset: "USDC", decimals: 6, network: "eip155:10143" },
+      gasAndCollateral: { asset: "MON", decimals: 18, network: "eip155:10143" },
+    };
+  }
 
   if (mission.objective === "Recover a known CC0 dataset, verify every piece, and restore at least two independent seeders.") {
     mission.objective = "Reconstruct a known CC0 fixture, verify every piece, and model two complete replicas.";
@@ -134,13 +171,16 @@ function migrateMission(mission, system) {
     }
   }
 
-  if (mission.rainCard && mission.rainCard.mode === "local") {
-    if (mission.rainCard.principalId === "principal_rain_labs") {
-      mission.rainCard.principalId = "principal_lazarus_demo";
+  if (mission.rainCard) {
+    mission.rainCard.currency = String(mission.rainCard.currency || budgetCurrency).toUpperCase();
+    if (mission.rainCard.mode === "local") {
+      if (mission.rainCard.principalId === "principal_rain_labs") {
+        mission.rainCard.principalId = "principal_lazarus_demo";
+      }
+      mission.rainCard.synthetic = true;
+      mission.rainCard.fundsMoved = false;
+      mission.rainCard.externalEndpoint = false;
     }
-    mission.rainCard.synthetic = true;
-    mission.rainCard.fundsMoved = false;
-    mission.rainCard.externalEndpoint = false;
   }
   for (const payment of Array.isArray(mission.payments) ? mission.payments : []) {
     if (!localPaymentRecord(payment)) continue;
@@ -148,6 +188,23 @@ function migrateMission(mission, system) {
     payment.synthetic = true;
     payment.fundsMoved = false;
     payment.externalEndpoint = false;
+    if (
+      sourceSchemaVersion < STATE_SCHEMA_VERSION &&
+      budgetCurrency === "USD" &&
+      payment.network === "eip155:10143" &&
+      String(payment.currency).toUpperCase() === "USDC"
+    ) {
+      const legacyMinor = Number.isSafeInteger(payment.amountMinor) ? payment.amountMinor : 0;
+      payment.budgetImpactMinor ??= legacyMinor;
+      payment.settlementAsset ||= {
+        symbol: "USDC",
+        address: MONAD_USDC_TESTNET,
+        decimals: 6,
+        amountAtomic: (BigInt(legacyMinor) * 10_000n).toString(),
+        mode: "synthetic-reference",
+      };
+      payment.currency = budgetCurrency;
+    }
     if (payment.paymentResponse?.recommendedProvider === "provider_atlas_archive") {
       payment.paymentResponse.candidateProviders = 1;
     }
@@ -155,13 +212,41 @@ function migrateMission(mission, system) {
   for (const transaction of Array.isArray(mission.transactions) ? mission.transactions : []) {
     if (!transaction || typeof transaction !== "object") continue;
     const rail = String(transaction.rail || "").toLowerCase();
-    const localFinancialRecord = system.financialExecution?.realFunds !== true
-      && (rail.includes("rain") || rail.includes("monad") || rail.includes("x402"));
+    const localFinancialRecord = transaction.synthetic === true
+      || transaction.mode === "local"
+      || transaction.details?.mode === "local"
+      || String(transaction.id || "").startsWith("local_")
+      || (
+        sourceSchemaVersion < STATE_SCHEMA_VERSION &&
+        !hasExternalExecutionEvidence &&
+        transaction.externalEndpoint !== true &&
+        transaction.synthetic !== false &&
+        system.rain?.external !== true &&
+        (rail.includes("rain") || rail.includes("monad") || rail.includes("x402"))
+      );
     if (!localFinancialRecord) continue;
     transaction.synthetic = true;
     transaction.fundsMoved = false;
     transaction.externalEndpoint = false;
     if (rail.includes("monad")) transaction.chainWrite = false;
+    if (
+      sourceSchemaVersion < STATE_SCHEMA_VERSION &&
+      budgetCurrency === "USD" &&
+      rail.includes("x402") &&
+      String(transaction.currency).toUpperCase() === "USDC"
+    ) {
+      const legacyMinor = Number.isSafeInteger(transaction.amountMinor) ? transaction.amountMinor : 0;
+      transaction.settlementAsset ||= {
+        symbol: "USDC",
+        address: MONAD_USDC_TESTNET,
+        decimals: 6,
+        amountAtomic: (BigInt(legacyMinor) * 10_000n).toString(),
+        mode: "synthetic-reference",
+      };
+      transaction.currency = budgetCurrency;
+    } else if (rail.includes("monad") && Number.isSafeInteger(transaction.amountMinor)) {
+      transaction.currency = budgetCurrency;
+    }
     if (transaction.details && typeof transaction.details === "object") {
       transaction.details.synthetic = true;
       transaction.details.fundsMoved = false;
@@ -169,7 +254,12 @@ function migrateMission(mission, system) {
     }
   }
 
-  if (Array.isArray(mission.events)) {
+  if (
+    sourceSchemaVersion < STATE_SCHEMA_VERSION &&
+    !hasExternalExecutionEvidence &&
+    system.rain?.external !== true &&
+    Array.isArray(mission.events)
+  ) {
     mission.events.forEach((event) => rewriteLegacyEvent(event, mission));
     if (!mission.events.some((event) => event?.id === `actor_boundary_v2:${mission.id}`)) {
       mission.events.unshift({
@@ -181,6 +271,15 @@ function migrateMission(mission, system) {
         timestamp: mission.completedAt || mission.createdAt || new Date(0).toISOString(),
       });
     }
+  } else if (Array.isArray(mission.events) && !mission.events.some((event) => event?.id === `actor_boundary_v2:${mission.id}`)) {
+    mission.events.unshift({
+      id: `actor_boundary_v2:${mission.id}`,
+      source: "Runtime disclosure",
+      title: "Demo actor boundary confirmed",
+      description: "Atlas, the provider, and verifier roles are local simulations unless an external connector is explicitly reported. Rain sandbox and Monad rails are infrastructure, not merchant agents.",
+      status: "info",
+      timestamp: mission.completedAt || mission.createdAt || new Date(0).toISOString(),
+    });
   }
   return mission;
 }
@@ -188,15 +287,17 @@ function migrateMission(mission, system) {
 function migrateStateForRuntime(state, runtimeSystem = {}) {
   if (!state || typeof state !== "object") return state;
   state.system = { ...object(state.system), ...object(runtimeSystem) };
-  for (const mission of Array.isArray(state.missions) ? state.missions : []) {
-    migrateMission(mission, state.system);
-  }
   const version = Number.isSafeInteger(state.schemaVersion) ? state.schemaVersion : 1;
-  state.schemaVersion = Math.max(version, ACTOR_TRANSPARENCY_SCHEMA_VERSION);
+  for (const mission of Array.isArray(state.missions) ? state.missions : []) {
+    migrateMission(mission, state.system, version);
+  }
+  state.schemaVersion = Math.max(version, STATE_SCHEMA_VERSION);
   return state;
 }
 
 module.exports = {
-  ACTOR_TRANSPARENCY_SCHEMA_VERSION,
+  STATE_SCHEMA_VERSION,
+  // Backwards-compatible export for callers from the earlier actor-boundary migration.
+  ACTOR_TRANSPARENCY_SCHEMA_VERSION: STATE_SCHEMA_VERSION,
   migrateStateForRuntime,
 };

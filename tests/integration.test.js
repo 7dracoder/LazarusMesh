@@ -8,6 +8,8 @@ const { createApplication } = require("../server");
 const { MemoryStore } = require("../src/store");
 const { rehydrateLocalAdapters } = require("../src/rehydrate-local");
 const { LocalNegotiationAdapter } = require("../src/services/negotiation-local");
+const { createMission } = require("../src/demo-state");
+const { fromAccountingMinorUp } = require("../src/domain/currency");
 
 async function withServer(run, applicationOptions = {}) {
   const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "lazarus-mesh-test-"));
@@ -24,6 +26,47 @@ async function withServer(run, applicationOptions = {}) {
     fs.rmSync(temporaryRoot, { recursive: true, force: true });
   }
 }
+
+test("full local workflow keeps each supported accounting currency isolated from settlement assets", async () => {
+  const store = new MemoryStore(() => ({ missions: [] }));
+  const app = createApplication({ store });
+  const expectedSpent = {
+    USD: 976,
+    EUR: 898,
+    GBP: 762,
+    CAD: 1338,
+    AUD: 1484,
+  };
+
+  for (const currency of Object.keys(expectedSpent)) {
+    const mission = createMission({
+      recovery: app.adapters.recovery,
+      id: `mission_currency_${currency.toLowerCase()}`,
+      title: `${currency} recovery`,
+      currency,
+      totalBudgetMinor: fromAccountingMinorUp(2000, currency),
+      rewardMinor: fromAccountingMinorUp(500, currency),
+    });
+    app.orchestrator.addMission(mission);
+    await app.orchestrator.run(mission.id, 0);
+
+    assert.equal(mission.status, "COMPLETED");
+    assert.equal(mission.budget.currency, currency);
+    assert.equal(mission.budget.spentMinor, expectedSpent[currency]);
+    assert.equal(mission.negotiation.acceptedQuote.currency, currency);
+    assert.equal(mission.rainCard.currency, currency);
+    assert.ok(mission.payments.every((payment) => payment.currency === currency));
+    assert.ok(mission.transactions.every((transaction) => transaction.currency === currency));
+
+    const discovery = mission.payments.find((payment) => payment.network === "eip155:10143");
+    assert.equal(discovery.settlementAsset.symbol, "USDC");
+    assert.equal(discovery.settlementAsset.decimals, 6);
+    assert.equal(discovery.settlementAsset.amountAtomic, "10000");
+    const bounty = mission.transactions.find((transaction) => transaction.operation === "createBounty");
+    assert.equal(bounty.settlementAsset.symbol, "USDC");
+    assert.match(bounty.settlementAsset.amountAtomic, /^\d+$/);
+  }
+});
 
 test("full local recovery finishes with verified data, payments, and retired authority", async () => {
   await withServer(async (baseUrl) => {
@@ -68,7 +111,7 @@ test("full local recovery finishes with verified data, payments, and retired aut
     assert.ok(mission.transactions
       .filter((transaction) => transaction.rail === "Monad")
       .every((transaction) => transaction.chainWrite === false && transaction.details.chainWrite === false));
-    assert.ok(mission.events.some((event) => event.title === "Archive purchase simulated" && /\$0\.00 was charged/.test(event.description)));
+    assert.ok(mission.events.some((event) => event.title === "Archive purchase simulated" && /No money was charged/.test(event.description)));
     assert.ok(mission.events.some((event) => event.title === "Policy safety test passed" && /No funds moved/.test(event.description)));
   });
 });
@@ -117,6 +160,27 @@ test("live merchant mode rejects an unauthenticated or unsigned quote", async ()
   }, { adapterOverrides: { negotiation } });
 });
 
+test("a failed run durably clears its transient running flag", async () => {
+  const negotiation = new LocalNegotiationAdapter();
+  negotiation.liveMerchantApi = true;
+  const persisted = [];
+  const store = new MemoryStore(() => ({ missions: [] }));
+  const app = createApplication({
+    store,
+    adapterOverrides: { negotiation },
+    persistState: async (state) => persisted.push(JSON.parse(JSON.stringify(state))),
+  });
+
+  await assert.rejects(
+    app.orchestrator.run(store.get().activeMissionId, 0),
+    (error) => error.code === "MERCHANT_QUOTE_UNTRUSTED",
+  );
+
+  assert.equal(store.get().missions[0].running, false);
+  assert.ok(persisted.length >= 1);
+  assert.equal(persisted.at(-1).missions[0].running, false);
+});
+
 test("mission audit export returns downloadable JSON", async () => {
   await withServer(async (baseUrl) => {
     const state = await fetch(`${baseUrl}/api/state`).then((response) => response.json());
@@ -156,6 +220,43 @@ test("mission creation requires explicit rights attestation", async () => {
     const mission = await created.json();
     assert.equal(mission.status, "DEAD");
     assert.equal(mission.budget.rewardMinor, 700);
+  });
+});
+
+test("mission API accepts supported accounting currencies and rejects token symbols", async () => {
+  await withServer(async (baseUrl) => {
+    const created = await fetch(`${baseUrl}/api/missions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title: "Euro recovery",
+        rightsAttestation: true,
+        currency: "EUR",
+        rewardMinor: 460,
+        totalBudgetMinor: 1840,
+      }),
+    });
+    assert.equal(created.status, 201);
+    const mission = await created.json();
+    assert.equal(mission.budget.currency, "EUR");
+    assert.equal(mission.budget.totalMinor, 1840);
+    assert.deepEqual(mission.negotiation.allowedCurrencies, ["EUR"]);
+
+    const rejected = await fetch(`${baseUrl}/api/missions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title: "Token as fiat",
+        rightsAttestation: true,
+        currency: "USDC",
+        rewardMinor: 500,
+        totalBudgetMinor: 2000,
+      }),
+    });
+    assert.equal(rejected.status, 422);
+    const problem = await rejected.json();
+    assert.equal(problem.code, "CURRENCY_NOT_SUPPORTED");
+    assert.deepEqual(problem.supportedCurrencies, ["USD", "EUR", "GBP", "CAD", "AUD"]);
   });
 });
 
@@ -228,6 +329,10 @@ test("state publishes mission limits and truthful integration capabilities", asy
     assert.equal(state.system.missionCreation.maximumBudgetMinor, 500_000);
     assert.equal(state.system.missionCreation.minimumRewardMinor, 100);
     assert.equal(state.system.missionCreation.maximumRewardMinor, 100_000);
+    assert.deepEqual(state.system.missionCreation.supportedCurrencies, ["USD", "EUR", "GBP", "CAD", "AUD"]);
+    assert.equal(state.system.missionCreation.currencyLimits.EUR.minimumBudgetMinor, 1105);
+    assert.deepEqual(state.system.missionCreation.adapterCurrencies.rainSandbox, ["USD"]);
+    assert.deepEqual(state.system.missionCreation.adapterCurrencies.monadX402Settlement, ["USDC"]);
     assert.equal(state.system.missionCreation.contentRoot, state.missions[0].contentRoot);
     assert.equal(state.system.monad.writesEnabled, false);
     assert.equal(state.system.x402.liveSettlementEnabled, false);

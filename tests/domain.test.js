@@ -10,6 +10,7 @@ const {
   canonicalHash,
   createSyntheticManifest,
   evaluatePolicy,
+  potentiallyLiveRainSandboxCard,
   selectRail,
   simulateRecovery,
   verifyPiece,
@@ -33,6 +34,7 @@ function policyRequest(overrides = {}) {
       allowedRecipients: ['locator-agent'],
       allowedMccs: ['5734'],
       allowedPurposes: ['archive_recovery'],
+      allowedCurrencies: ['USD'],
       maxTransactions: 2,
       perTransactionLimitMinor: 1_000n,
       totalLimitMinor: 2_000n,
@@ -47,6 +49,7 @@ function policyRequest(overrides = {}) {
       mcc: '5734',
       purpose: 'archive_recovery',
       amountMinor: 800n,
+      currency: 'USD',
     },
     usage: {
       transactionCount: 1,
@@ -147,6 +150,43 @@ test('policy returns stable reason codes for blocked actions', () => {
     evaluatePolicy(policyRequest({ killSwitchActive: true })).code,
     'KILL_SWITCH_ACTIVE',
   );
+  assert.equal(
+    evaluatePolicy(policyRequest({ intent: { currency: 'EUR' } })).code,
+    'CURRENCY_NOT_ALLOWED',
+  );
+});
+
+test('policy rejects arithmetic across mission, intent, and usage currencies', () => {
+  const request = policyRequest({
+    mission: { budget: { currency: 'USD' } },
+    policy: { allowedCurrencies: ['USD', 'EUR'] },
+    intent: { currency: 'EUR', amountMinor: 10n },
+    usage: { currency: 'USD', spentMinor: 90n },
+  });
+  assert.equal(evaluatePolicy(request).code, 'BUDGET_CURRENCY_MISMATCH');
+  assert.equal(evaluatePolicy({
+    ...request,
+    intent: { ...request.intent, currency: 'USD' },
+    usage: { ...request.usage, currency: 'EUR' },
+  }).code, 'BUDGET_CURRENCY_MISMATCH');
+});
+
+test('Rain sandbox authority fails closed when its expiry is unknown', () => {
+  assert.equal(potentiallyLiveRainSandboxCard({
+    mode: 'rain-sandbox',
+    state: 'unknown',
+    expiresAt: 'not-an-instant',
+  }, new Date(NOW)), true);
+  assert.equal(potentiallyLiveRainSandboxCard({
+    mode: 'rain-sandbox',
+    state: 'active',
+    expiresAt: '2026-08-06T16:00:00.000Z',
+  }, new Date(NOW)), false);
+  assert.equal(potentiallyLiveRainSandboxCard({
+    mode: 'local',
+    state: 'active',
+    expiresAt: 'not-an-instant',
+  }, new Date(NOW)), false);
 });
 
 test('state machine accepts only the next canonical state', () => {

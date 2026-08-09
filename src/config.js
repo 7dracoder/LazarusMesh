@@ -58,7 +58,7 @@ function rainSandboxConfig(env = process.env) {
     userId: nonempty(env, 'RAIN_USER_ID'),
     teamId: nonempty(env, 'RAIN_TEAM_ID'),
     contractId: nonempty(env, 'RAIN_CONTRACT_ID'),
-    autoFundMinor: positiveInteger(env, 'RAIN_AUTO_FUND_MINOR', 2000),
+    autoFundMinor: positiveInteger(env, 'RAIN_AUTO_FUND_MINOR', 0),
     timeoutMs: positiveInteger(env, 'RAIN_TIMEOUT_MS', 12_000),
   };
 }
@@ -74,6 +74,7 @@ function monadReadiness(env = process.env) {
     payToConfigured: Boolean(nonempty(env, 'MONAD_PAY_TO_ADDRESS')),
     usdcConfigured: Boolean(nonempty(env, 'MONAD_USDC_ADDRESS')),
     facilitatorConfigured: Boolean(nonempty(env, 'X402_FACILITATOR_URL')),
+    resourceConfigured: Boolean(nonempty(env, 'X402_AVAILABILITY_BASE_URL')),
   };
 }
 
@@ -85,9 +86,28 @@ function monadNetworkConfig(env = process.env) {
   };
 }
 
+function monadX402Config(env = process.env) {
+  const expectedAmountAtomic = nonempty(env, 'X402_EXPECTED_AMOUNT_ATOMIC') || '10000';
+  return {
+    availabilityBaseUrl: nonempty(env, 'X402_AVAILABILITY_BASE_URL'),
+    payToAddress: nonempty(env, 'MONAD_PAY_TO_ADDRESS'),
+    privateKey: nonempty(env, 'MONAD_PRIVATE_KEY'),
+    rpcUrl: nonempty(env, 'MONAD_RPC_URL'),
+    expectedAmountAtomic,
+    maxPaymentAtomic: nonempty(env, 'X402_MAX_PAYMENT_ATOMIC') || expectedAmountAtomic,
+    maxAuthorizationSeconds: positiveInteger(env, 'X402_MAX_AUTHORIZATION_SECONDS', 300),
+    timeoutMs: positiveInteger(env, 'X402_TIMEOUT_MS', 12_000),
+    preflightTtlMs: positiveInteger(env, 'X402_PREFLIGHT_TTL_MS', 60_000),
+    responseLimitBytes: positiveInteger(env, 'X402_RESPONSE_LIMIT_BYTES', 65_536),
+    confirmations: positiveInteger(env, 'MONAD_X402_CONFIRMATIONS', 6),
+    expectedProviderId: nonempty(env, 'X402_EXPECTED_PROVIDER_ID') || 'provider_atlas_archive',
+  };
+}
+
 module.exports = {
   loadEnvFile,
   monadNetworkConfig,
   monadReadiness,
+  monadX402Config,
   rainSandboxConfig,
 };
