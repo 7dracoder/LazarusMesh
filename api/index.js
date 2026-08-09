@@ -4,6 +4,7 @@ const { createApplication } = require("../server");
 const { MemoryStore } = require("../src/store");
 const { NeonStateStore, StateConflictError } = require("../src/neon-state");
 const { rehydrateLocalAdapters } = require("../src/rehydrate-local");
+const { migrateStateForRuntime } = require("../src/state-migrations");
 
 function restoreRewrittenApiUrl(request) {
   const host = typeof request.headers?.host === "string" ? request.headers.host : "localhost";
@@ -105,6 +106,7 @@ module.exports = async function handler(request, response) {
     // would let the GET replace the POST's in-flight state.
     const app = createRuntime();
     const snapshot = await app.persistence.load(app.stateFactory);
+    migrateStateForRuntime(snapshot.state, app.system);
     app.store.replace(snapshot.state);
     await rehydrateLocalAdapters(app.store.get(), app.adapters);
 

@@ -2,7 +2,7 @@
 
 Lazarus Mesh is a local-first hackathon MVP for recovering legally authorized digital artifacts that still have a valid content commitment but no available complete copy.
 
-The included mission starts with a bundled CC0 rainfall dataset at zero seeders. The system discovers an archive provider, bargains a `$12.00` ask down to a binding `$9.75` quote, creates tightly bounded payment authority, reconstructs and verifies all 24 pieces, releases a recovery bounty, and restores two seeders.
+The included mission starts with a bundled CC0 rainfall dataset at zero modeled replicas. The system simulates provider discovery, bargains with a local merchant model from a `$12.00` ask to a policy-bound `$9.75` demo quote, simulates tightly bounded payment authority, reconstructs and verifies all 24 local fixture pieces, advances a demo bounty ledger, and models two replicas.
 
 ## What is implemented
 
@@ -15,6 +15,18 @@ The release has two explicit modes:
 
 `rain-sandbox` is therefore a hybrid sandbox mode. It makes authenticated external Rain sandbox calls, but it does not send real money. Monad bounty execution and x402 settlement remain local in both modes.
 
+## Who the merchants and agents are
+
+The running app does **not** contact a real merchant or a network of autonomous agents:
+
+- **Atlas Archive Cloud** is the single simulated seller model.
+- **Atlas Archive Node** is a simulated provider identity backed by the bundled fixture file.
+- **Lazarus buyer policy** is the deterministic orchestrator; it is not an LLM or free-form chat agent.
+- **North, East, and West Verifier** are scripted local quorum roles.
+- **Rain, Monad, and x402 are rails/infrastructure, not merchants or agents.**
+
+Their offers, counters, quotes, verification decisions, and receipts are structured local state transitions. No external Atlas business, provider endpoint, marketplace, seeder network, or verifier service is contacted. See [Actors, Merchants, and Live Integration](docs/ACTORS_AND_MERCHANTS.md) for the complete boundary and the exact setup required for real agent-to-agent communication.
+
 When public Monad RPC and x402 facilitator URLs are configured, `/api/health` performs read-only readiness checks:
 
 - Monad `eth_chainId` must report testnet chain `10143` (`eip155:10143`).
@@ -23,15 +35,15 @@ When public Monad RPC and x402 facilitator URLs are configured, `/api/health` pe
 
 ## The bargaining flow
 
-Merchant negotiation is deterministic and bounded:
+The simulated merchant negotiation is deterministic and bounded:
 
 1. Atlas Archive Cloud asks `$12.00`.
 2. The buyer offers its `$9.00` target.
 3. Atlas counters at `$10.50`.
 4. The buyer offers `$9.75`.
-5. Atlas accepts and issues a 15-minute binding quote.
+5. The Atlas model accepts and issues a 15-minute policy-bound demo quote.
 
-Before payment, a separate fail-closed quote policy verifies the quote digest, session, merchant, MCC, content root, purpose, currency, amount, budget, terms, round count, approval threshold, and expiry. The accepted terms are one-time archival egress with no renewal, data sharing, or exclusivity.
+Before simulated payment authorization, a separate fail-closed quote policy verifies the quote digest, session, merchant, MCC, content root, purpose, currency, amount, budget, terms, round count, approval threshold, and expiry. The accepted terms are one-time archival egress with no renewal, data sharing, or exclusivity. The local digest detects mutation; it is not a signature from a real merchant.
 
 The result saves `$2.25`, or `18.75%`, from the initial ask. A Rain card is created only after the quote passes both quote validation and the general spending policy.
 
@@ -167,7 +179,7 @@ Rain sandbox tests use injected fake `fetch` implementations and dummy credentia
 5. Confirm the one-cent x402 receipt and `$9.75` archive settlement.
 6. Confirm the unrelated `$9.00` challenge is declined and does not count as spend.
 7. Watch all 24 pieces become recovered and verified.
-8. Confirm the reconstructed SHA-256 matches, the `$5.00` reward reaches 100%, and two seeders exist.
+8. Confirm the reconstructed SHA-256 matches, the `$5.00` demo reward reaches 100%, and two replicas are modeled.
 9. Export the audit JSON.
 10. In local mode, reset freely. In hybrid mode, complete the mission before resetting.
 

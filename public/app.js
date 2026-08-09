@@ -3,11 +3,11 @@
 
   const STAGES = ["DEAD", "DISCOVERING", "RECOVERING", "VERIFIED", "RESEEDED"];
   const STAGE_COPY = {
-    DEAD: "Agent awaiting command",
-    DISCOVERING: "Discovery agents scanning providers",
-    RECOVERING: "Recovery workers reconstructing pieces",
-    VERIFIED: "Verifier quorum confirming content root",
-    RESEEDED: "Artifact restored to the mesh",
+    DEAD: "Workflow awaiting command",
+    DISCOVERING: "Local policy evaluating the demo candidate",
+    RECOVERING: "Bundled fixture pieces being reconstructed",
+    VERIFIED: "Scripted quorum confirming the content root",
+    RESEEDED: "Two demo replicas modeled locally",
   };
   const money = new Intl.NumberFormat("en-US", {
     style: "currency",
@@ -47,6 +47,7 @@
     missionList: $("#mission-list"),
     missionCount: $("#mission-count"),
     budgetLabel: $("#budget-label"),
+    seedersLabel: $("#seeders-label"),
     railsEyebrow: $("#rails-eyebrow"),
     railsHeading: $("#rails-heading"),
     connectionChip: $("#connection-chip"),
@@ -423,6 +424,8 @@
     const monadNetwork = asObject(monadHealth.network);
     const x402 = asObject(integrations.x402 ?? system.x402 ?? system.adapters?.x402);
     const x402Health = asObject(healthAdapters.x402);
+    const negotiation = asObject(integrations.negotiation ?? system.negotiation ?? system.adapters?.negotiation);
+    const recovery = asObject(integrations.recovery ?? system.recovery ?? system.adapters?.recovery);
 
     const rainMode = String(rainHealth.mode ?? rain.mode ?? "local").toLowerCase();
     const rainExternal = rain.external === true || /sandbox|external/.test(rainMode) || /hybrid[_ -]?sandbox/.test(rawMode.toLowerCase());
@@ -455,25 +458,46 @@
     const x402Status = x402Live ? "Testnet settlement enabled" : "Local settlement only";
     const x402Detail = facilitatorConfigured ? "Facilitator readiness configured" : "Machine handshake simulated locally";
 
-    const needsAttention = !rainReady || app.missionCreationPolicy.available === false;
+    const merchantConnected = negotiation.liveMerchantApi === true;
+    const merchantLive = merchantConnected
+      && negotiation.merchantAuthenticated === true
+      && negotiation.merchantSignedQuotes === true;
+    const providerLive = recovery.networkedProviders === true;
+    const marketStatus = merchantLive && providerLive
+      ? "External actors connected"
+      : merchantConnected && !merchantLive
+        ? "Merchant API is not trusted"
+      : merchantLive
+        ? "Merchant connected · provider local"
+        : providerLive
+          ? "Provider connected · merchant local"
+          : "Demo actors only";
+    const marketDetail = merchantConnected || providerLive
+      ? `${merchantLive ? "Authenticated merchant API" : merchantConnected ? "Unverified merchant API" : "Merchant simulator"} · ${providerLive ? "Provider API" : "Bundled fixture"}`
+      : "Atlas seller + provider are simulated";
+
+    const needsAttention = !rainReady
+      || app.missionCreationPolicy.available === false
+      || (merchantConnected && !merchantLive);
     elements.readinessStrip.dataset.state = needsAttention ? "attention" : rainExternal ? "sandbox" : "local";
     elements.readinessSummary.textContent = needsAttention
       ? "A required adapter needs attention before a mission can run."
       : rainExternal
         ? "Hybrid sandbox: Rain is external; Monad and x402 remain local/read-only."
-        : "Local protocol sandbox: no production payment mutations are enabled.";
+        : "Demo simulation: no external merchant or provider agents are contacted; no funds or chain writes occur.";
     elements.readinessItems.innerHTML = [
       readinessItem("Rain", rainStatus, rainDetail, !rainReady ? "attention" : rainExternal ? "sandbox" : "local"),
       readinessItem("Monad", monadStatus, monadDetail, monadWrites ? "testnet" : probePassed ? "ready" : "local"),
       readinessItem("x402", x402Status, x402Detail, x402Live ? "testnet" : "local"),
+      readinessItem("Marketplace", marketStatus, marketDetail, merchantConnected && !merchantLive ? "attention" : merchantLive && providerLive ? "ready" : "local"),
     ].join("");
 
-    elements.footerPrimary.textContent = "Auditable recovery with bounded agent authority.";
-    elements.footerRuntime.textContent = `${rainExternal ? "Rain sandbox" : "Rain local"} · ${monadWrites ? "Monad testnet writes" : "Monad local ledger / testnet read-only"} · ${x402Live ? "x402 testnet settlement" : "x402 local settlement"} · Authorized content only`;
+    elements.footerPrimary.textContent = "Deterministic recovery demo with bounded policy authority.";
+    elements.footerRuntime.textContent = `${merchantLive ? "Merchant API" : "Simulated merchant"} · ${providerLive ? "Provider API" : "Bundled fixture provider"} · ${rainExternal ? "Rain sandbox" : "Rain local"} · ${monadWrites ? "Monad testnet writes" : "Monad local ledger / testnet read-only"}`;
     if (elements.runtimeFootnote) {
       elements.runtimeFootnote.innerHTML = rainExternal
         ? `${escapeHtml(rainStatus)}<br />Monad ${monadWrites ? "testnet writes enabled" : "local ledger · testnet read-only"}`
-        : "Local protocol sandbox<br />No external payment mutations";
+        : "Local demo simulation<br />No external merchants, providers, or payment mutations";
     }
   }
 
@@ -517,9 +541,13 @@
     const rails = finiteNumber(system.paymentRails?.online ?? system.railsOnline, 3);
     const railTotal = finiteNumber(system.paymentRails?.total ?? system.railsTotal, 3);
     const quorum = titleCase(system.verifiers?.status ?? system.quorum?.status ?? "online");
+    const actors = asObject(system.actors);
+    const externalActors = finiteNumber(actors.externalConnected, 0);
+    const requiredActors = finiteNumber(actors.externalRequired, 3);
     elements.protocolList.innerHTML = `
       <div><dt>Orchestrator</dt><dd><i></i>${escapeHtml(orchestrator)}</dd></div>
-      <div><dt>Configured rails</dt><dd><i></i>${rails} / ${railTotal}</dd></div>
+      <div><dt>External payment rails</dt><dd><i></i>${rails} / ${railTotal}</dd></div>
+      <div><dt>External actors</dt><dd><i></i>${externalActors} / ${requiredActors}</dd></div>
       <div><dt>Verifier quorum</dt><dd><i></i>${escapeHtml(quorum)}</dd></div>
     `;
   }
@@ -626,6 +654,7 @@
     const stage = normalizeStage(mission);
     const financialExecution = asObject(app.data.system?.financialExecution);
     const demoOnly = financialExecution.realFunds !== true;
+    const networkedProviders = app.data.system?.recovery?.networkedProviders === true;
 
     $("#availability-value").textContent = `${availability}%`;
     $("#availability-bar").style.width = `${availability}%`;
@@ -636,7 +665,10 @@
         ? "Root fully reconstructed"
         : "Awaiting recovery";
     $("#seeders-value").textContent = String(seeders);
-    $("#seeders-detail").textContent = seeders > 1
+    if (elements.seedersLabel) elements.seedersLabel.textContent = networkedProviders ? "Active seeders" : "Demo replicas";
+    $("#seeders-detail").textContent = !networkedProviders
+      ? seeders > 0 ? "Modeled locally · no peer network" : "No demo replicas yet"
+      : seeders > 1
       ? "Resilient mesh online"
       : seeders === 1
         ? "Single recovery source"
@@ -812,7 +844,7 @@
       }
     }
     updateRail("x402", x402, {
-      idleState: stage === "DISCOVERING" ? "Buying discovery" : "Awaiting discovery",
+      idleState: stage === "DISCOVERING" ? "Simulating discovery" : "Awaiting discovery",
       activeState: x402Live ? "Settled" : "Simulated locally",
       activeStateOverride: x402Live ? null : "Simulated locally",
       description: x402Live
@@ -833,7 +865,7 @@
     $("#monad-description").textContent = monad?.description ?? monad?.message ?? (monadWrites
       ? "Onchain bounty, collateral, and finality"
       : "Local bounty ledger · no blockchain writes");
-    $("#monad-amount").textContent = `${displayMoney(budget.reward)} bounty`;
+    $("#monad-amount").textContent = `${displayMoney(budget.reward)} ${monadWrites ? "bounty" : "demo bounty"}`;
     $("#monad-reference").textContent = shorten(recordReference(monad) === "No receipt" ? (monadWrites ? "Monad network" : "Local simulation") : recordReference(monad), 9, 6);
     $("#monad-reference").title = String(recordReference(monad));
   }
@@ -857,9 +889,9 @@
 
   function eventParts(event, index) {
     if (typeof event === "string") {
-      return { title: "Agent update", description: event, time: `#${index + 1}`, category: eventCategory(event) };
+      return { title: "Workflow update", description: event, time: `#${index + 1}`, category: eventCategory(event) };
     }
-    const type = event?.type ?? event?.kind ?? event?.name ?? event?.status ?? "Agent update";
+    const type = event?.type ?? event?.kind ?? event?.name ?? event?.status ?? "Workflow update";
     const title = event?.title ?? titleCase(type);
     let description = event?.message ?? event?.description ?? event?.detail ?? event?.reason ?? "Mission state updated.";
     if (typeof description === "object") {
@@ -904,7 +936,7 @@
       timeline.innerHTML = `
         <div class="timeline-empty">
           <span class="tiny-spinner" aria-hidden="true"></span>
-          Mission ready. Run the first autonomous step.
+          Mission ready. Run the first deterministic step.
         </div>
       `;
       return;
@@ -941,6 +973,7 @@
 
   function negotiationTranscript(negotiation, acceptedQuote) {
     const transcript = [];
+    const buyerActor = asObject(app.data.system?.actors?.buyer);
     const offers = asArray(negotiation.offers);
     const initialAmount = firstMinor(
       negotiation.initialAmountMinor,
@@ -999,7 +1032,7 @@
       if (buyerAmount !== null) {
         transcript.push({
           party: "agent",
-          speaker: "Recovery agent",
+          speaker: buyerActor.name ?? "Lazarus buyer policy",
           message: `Round ${roundNumber} counter · ${titleCase(buyerSource.reasonCode ?? round?.reasonCode ?? "bounded policy")}`,
           amountMinor: buyerAmount,
           timestamp: buyerSource.timestamp ?? buyerSource.sentAt ?? round?.createdAt ?? round?.timestamp,
@@ -1020,7 +1053,9 @@
       transcript.push({
         party: "policy",
         speaker: "Policy engine",
-        message: "Binding quote accepted inside the approved envelope",
+        message: app.data.system?.negotiation?.ready === true
+          ? "Merchant-authenticated quote accepted inside the approved envelope"
+          : "Demo quote accepted inside the local policy envelope",
         amountMinor: firstMinor(acceptedQuote.amountMinor),
         timestamp: acceptedQuote.acceptedAt ?? negotiation.completedAt,
       });
@@ -1115,6 +1150,21 @@
       : negotiation.decision;
     const sessionId = negotiation.sessionId ?? "Not opened";
     const quoteId = quote?.quoteId ?? "Not issued";
+    const negotiationRuntime = asObject(app.data.system?.negotiation);
+    const actorRuntime = asObject(app.data.system?.actors);
+    const buyerActor = asObject(actorRuntime.buyer);
+    const providerActor = asObject(actorRuntime.provider);
+    const merchantConnected = negotiationRuntime.liveMerchantApi === true;
+    const liveMerchant = merchantConnected
+      && negotiationRuntime.merchantAuthenticated === true
+      && negotiationRuntime.merchantSignedQuotes === true;
+    const liveProvider = app.data.system?.recovery?.networkedProviders === true;
+    const merchantType = liveMerchant
+      ? "Authenticated merchant API"
+      : merchantConnected
+        ? "Unverified merchant API (blocked)"
+        : "Simulated demo merchant";
+    const providerType = liveProvider ? "External provider API" : "Bundled local fixture";
 
     const transcriptHtml = transcript.length
       ? `<ol class="deal-transcript" aria-label="Merchant offer transcript">${transcript.map((entry) => `
@@ -1135,7 +1185,7 @@
       <div class="deal-audit">
         <section class="deal-summary" aria-label="Negotiated deal summary">
           <div class="deal-status-row">
-            <span>Merchant session</span>
+            <span>${liveMerchant ? "External merchant session" : "Simulated negotiation"}</span>
             <em class="audit-state${failed ? " is-blocked" : pending ? " is-pending" : ""}">${escapeHtml(titleCase(status))}</em>
           </div>
           <div class="deal-price-flow" aria-label="Initial ask ${escapeHtml(displayMinor(askMinor))}, accepted amount ${escapeHtml(displayMinor(acceptedMinor))}, savings ${escapeHtml(displayMinor(savingsMinor))} or ${escapeHtml(savingsPercent)}">
@@ -1145,7 +1195,12 @@
             <div class="deal-savings"><small>Negotiated savings</small><strong>${displayMinor(savingsMinor)} <span>· ${escapeHtml(savingsPercent)}</span></strong></div>
           </div>
           <dl class="deal-meta">
-            <div><dt>Merchant</dt><dd>${escapeHtml(merchantName)}</dd></div>
+            <div><dt>Seller</dt><dd>${escapeHtml(merchantName)}</dd></div>
+            <div><dt>Seller type</dt><dd>${escapeHtml(merchantType)}</dd></div>
+            <div><dt>Buyer</dt><dd>${escapeHtml(buyerActor.name ?? "Lazarus buyer policy")}</dd></div>
+            <div><dt>Provider</dt><dd>${escapeHtml(providerActor.name ?? "Atlas Archive Node")}</dd></div>
+            <div><dt>Provider type</dt><dd>${escapeHtml(providerType)}</dd></div>
+            <div><dt>Connection</dt><dd>${escapeHtml(liveMerchant ? "Authenticated HTTPS" : merchantConnected ? "Untrusted HTTPS · payment blocked" : "In-process messages")}</dd></div>
             <div><dt>Rounds</dt><dd>${rounds.length}${maximumRounds === null ? "" : ` / ${maximumRounds}`}</dd></div>
             <div><dt>Session</dt><dd title="${escapeHtml(sessionId)}">${escapeHtml(shorten(sessionId, 9, 6))}</dd></div>
             <div><dt>Quote</dt><dd title="${escapeHtml(quoteId)}">${escapeHtml(shorten(quoteId, 9, 6))}</dd></div>
@@ -1154,12 +1209,13 @@
           </dl>
         </section>
         <section class="deal-section" aria-labelledby="deal-transcript-heading">
-          <div class="deal-section-heading"><strong id="deal-transcript-heading">Offer transcript</strong><span>${transcript.length} entries</span></div>
+          <div class="deal-section-heading"><strong id="deal-transcript-heading">${liveMerchant ? "External offer transcript" : "Simulated offer transcript"}</strong><span>${transcript.length} entries</span></div>
           ${transcriptHtml}
         </section>
         <section class="deal-section" aria-labelledby="deal-terms-heading">
-          <div class="deal-section-heading"><strong id="deal-terms-heading">Exact terms</strong><span>Binding quote</span></div>
+          <div class="deal-section-heading"><strong id="deal-terms-heading">Exact terms</strong><span>${liveMerchant ? "Merchant-authenticated quote" : "Policy-bound demo quote"}</span></div>
           ${termsHtml}
+          ${liveMerchant ? "" : '<p class="deal-boundary-note">This quote binds only the local mission simulation. No external seller was contacted and no purchase was made.</p>'}
         </section>
       </div>
     `;
@@ -1184,7 +1240,7 @@
     if (!records.length) {
       content.innerHTML = auditEmpty(
         "No receipts issued",
-        "Payment and onchain receipts appear here as the agent executes the mission.",
+        "Simulated payment and ledger receipts appear here as the local workflow executes the mission.",
       );
       return;
     }
@@ -1245,7 +1301,7 @@
     if (!verifiers.length) {
       content.innerHTML = auditEmpty(
         "Quorum awaiting assignment",
-        "Independent verifier agents will challenge pieces and attest to the content root.",
+        "Scripted local verifier roles will challenge fixture pieces and attest to the content root.",
       );
       return;
     }
@@ -1253,14 +1309,15 @@
     content.innerHTML = `<div class="verifier-list">${verifiers.map((verifier, index) => {
       const value = typeof verifier === "string" ? { address: verifier } : verifier ?? {};
       const name = value.name ?? value.agent ?? value.id ?? `Verifier ${index + 1}`;
-      const identity = value.address ?? value.identity ?? value.did ?? value.publicKey ?? "Local agent";
+      const identity = value.address ?? value.identity ?? value.did ?? value.publicKey ?? "Scripted local role";
       const status = titleCase(value.status ?? value.state ?? (value.verified || value.attested ? "attested" : "ready"));
       const passed = /attest|verified|pass|complete|signed|ready/i.test(status);
+      const simulated = value.actorMode === "simulated" || app.data.system?.actors?.verifiers?.simulated === true;
       return `
         <div class="verifier-row">
           <span class="verifier-avatar" aria-hidden="true">V${index + 1}</span>
           <span class="verifier-copy"><strong>${escapeHtml(name)}</strong><span title="${escapeHtml(identity)}">${escapeHtml(shorten(identity, 12, 7))}</span></span>
-          <em class="audit-state${passed ? "" : " is-pending"}">${escapeHtml(status)}</em>
+          <em class="audit-state${passed ? "" : " is-pending"}">${escapeHtml(simulated ? `${status} · Local` : status)}</em>
         </div>
       `;
     }).join("")}</div>`;
@@ -1849,7 +1906,7 @@
       $("#main-content").focus({ preventScroll: true });
     });
 
-    $("#run-demo").addEventListener("click", (event) => runMissionAction("run", event.currentTarget, "Autonomous recovery started"));
+    $("#run-demo").addEventListener("click", (event) => runMissionAction("run", event.currentTarget, "Recovery workflow started"));
     $("#next-step").addEventListener("click", (event) => runMissionAction("step", event.currentTarget, "Mission advanced"));
     $("#blocked-purchase").addEventListener("click", (event) => runMissionAction("blocked-purchase", event.currentTarget, "Policy guardrail proved"));
     $("#reset-demo").addEventListener("click", resetDemo);

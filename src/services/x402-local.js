@@ -53,9 +53,12 @@ class LocalX402Adapter {
       network: "eip155:10143",
       transactionHash: localTxHash("x402", missionId, contentRoot, timestamp),
       status: "settled",
+      synthetic: true,
+      fundsMoved: false,
+      externalEndpoint: false,
       timestamp,
       paymentResponse: {
-        candidateProviders: 2,
+        candidateProviders: 1,
         recommendedProvider: "provider_atlas_archive",
         estimatedRecoverySeconds: 45,
         estimatedCostMinor: 1200,

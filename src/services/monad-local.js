@@ -25,6 +25,9 @@ class LocalMonadAdapter {
       transactionHash: localTxHash(operation, missionId, this.sequence, timestamp),
       timestamp,
       confirmed: true,
+      synthetic: true,
+      fundsMoved: false,
+      chainWrite: false,
       ...details,
     };
   }

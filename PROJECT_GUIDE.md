@@ -206,7 +206,7 @@ The orchestrator exposes nine actions because three recovery batches occur while
 
 - The local x402 adapter creates a `402` payment requirement for the content root.
 - The payment requirement describes the `exact` scheme, network `eip155:10143`, asset `USDC`, amount `1`, and an availability resource path.
-- Local settlement records a synthetic one-cent receipt, two candidate providers, Atlas as the recommended provider, a 45-second estimate, a `$12.00` estimate, and confidence `0.94`.
+- Local settlement records a synthetic one-cent receipt, one modeled candidate provider, Atlas as the recommended provider, a 45-second estimate, a `$12.00` estimate, and confidence `0.94`.
 - Mission spend increases from `0` to `1` minor unit.
 - **After discovery is complete, a separate negotiation session starts.** Atlas asks `$12.00`; the bounded two-round transcript reaches `$9.75` and creates a binding quote.
 - State becomes `DISCOVERING`, availability becomes `8`, and the event log explicitly says bargaining happened in a separate quote session.
@@ -689,7 +689,7 @@ The export endpoint returns a formatted mission audit containing the public miss
 - Monad always reports `execution: local-ledger` and `writesEnabled: false`.
 - x402 always reports `execution: local-handshake` and `liveSettlementEnabled: false`.
 - Negotiation reports local mode.
-- Recovery reports `real-bytes-local`.
+- Recovery reports `verified-local-fixture`.
 - Configuration is exposed only as booleans such as `signerConfigured`, never raw values.
 
 ### Manual blocked-purchase endpoint

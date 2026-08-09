@@ -7,10 +7,14 @@ const path = require("node:path");
 const { createApplication } = require("../server");
 const { MemoryStore } = require("../src/store");
 const { rehydrateLocalAdapters } = require("../src/rehydrate-local");
+const { LocalNegotiationAdapter } = require("../src/services/negotiation-local");
 
-async function withServer(run) {
+async function withServer(run, applicationOptions = {}) {
   const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "lazarus-mesh-test-"));
-  const { server } = createApplication({ dataFile: path.join(temporaryRoot, "state.json") });
+  const { server } = createApplication({
+    ...applicationOptions,
+    dataFile: path.join(temporaryRoot, "state.json"),
+  });
   try {
     await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
     const baseUrl = `http://127.0.0.1:${server.address().port}`;
@@ -43,8 +47,12 @@ test("full local recovery finishes with verified data, payments, and retired aut
     assert.equal(mission.negotiation.savingsMinor, 225);
     assert.equal(mission.negotiation.savingsBps, 1875);
     assert.equal(mission.negotiation.rounds.length, 2);
+    assert.equal(mission.negotiation.acceptedQuote.merchantAuthenticated, false);
+    assert.equal(mission.negotiation.acceptedQuote.merchantSigned, false);
     assert.equal(mission.rainCard.maximumAmountMinor, 975);
     assert.equal(mission.rainCard.state, "retired");
+    assert.equal(mission.rainCard.synthetic, true);
+    assert.equal(mission.rainCard.fundsMoved, false);
     assert.ok(mission.payments.some(
       (payment) => payment.status === "declined" && payment.code === "MERCHANT_NOT_ALLOWED" && payment.amountMinor === 900,
     ));
@@ -52,7 +60,14 @@ test("full local recovery finishes with verified data, payments, and retired aut
       (payment) => payment.authorized === true && payment.amountMinor === 975 && payment.quoteId === mission.negotiation.acceptedQuote.quoteId,
     ));
     assert.ok(mission.payments.some((payment) => payment.network === "eip155:10143"));
+    assert.ok(mission.payments.every((payment) => payment.synthetic === true));
+    assert.ok(mission.payments.every((payment) => payment.fundsMoved === false));
     assert.ok(mission.transactions.some((transaction) => transaction.operation === "releaseReward"));
+    assert.ok(mission.transactions.every((transaction) => transaction.synthetic === true));
+    assert.ok(mission.transactions.every((transaction) => transaction.fundsMoved === false));
+    assert.ok(mission.transactions
+      .filter((transaction) => transaction.rail === "Monad")
+      .every((transaction) => transaction.chainWrite === false && transaction.details.chainWrite === false));
     assert.ok(mission.events.some((event) => event.title === "Archive purchase simulated" && /\$0\.00 was charged/.test(event.description)));
     assert.ok(mission.events.some((event) => event.title === "Policy safety test passed" && /No funds moved/.test(event.description)));
   });
@@ -76,6 +91,30 @@ test("negotiation API requires discovery and returns an idempotent binding quote
     assert.equal(first.rounds.length, 2);
     assert.equal(replay.acceptedQuote.quoteId, first.acceptedQuote.quoteId);
   });
+});
+
+test("live merchant mode rejects an unauthenticated or unsigned quote", async () => {
+  const negotiation = new LocalNegotiationAdapter();
+  negotiation.liveMerchantApi = true;
+  await withServer(async (baseUrl) => {
+    const state = await fetch(`${baseUrl}/api/state`).then((response) => response.json());
+    assert.equal(state.system.negotiation.liveMerchantApi, true);
+    assert.equal(state.system.negotiation.ready, false);
+    assert.equal(state.system.negotiation.communication, "external-https-untrusted");
+    assert.equal(state.system.actors.externalConnected, 0);
+    assert.equal(state.system.actors.merchant.connected, true);
+    assert.equal(state.system.actors.merchant.ready, false);
+    assert.ok(state.system.productionBlockers.includes("live_merchant_negotiation"));
+
+    const response = await fetch(`${baseUrl}/api/missions/${state.activeMissionId}/step`, { method: "POST" });
+    assert.equal(response.status, 422);
+    const body = await response.json();
+    assert.equal(body.code, "MERCHANT_QUOTE_UNTRUSTED");
+    const failedState = await fetch(`${baseUrl}/api/state`).then((result) => result.json());
+    const mission = failedState.missions.find((item) => item.id === state.activeMissionId);
+    assert.equal(mission.negotiation.acceptedQuote, null);
+    assert.equal(mission.rainCard, null);
+  }, { adapterOverrides: { negotiation } });
 });
 
 test("mission audit export returns downloadable JSON", async () => {
@@ -195,6 +234,27 @@ test("state publishes mission limits and truthful integration capabilities", asy
     assert.equal(state.system.financialExecution.mode, "local-simulation");
     assert.equal(state.system.financialExecution.realFunds, false);
     assert.equal(state.system.financialExecution.livePaymentsEnabled, false);
+    assert.equal(state.system.negotiation.liveMerchantApi, false);
+    assert.equal(state.system.negotiation.merchantAuthenticated, false);
+    assert.equal(state.system.negotiation.merchantSignedQuotes, false);
+    assert.equal(state.system.negotiation.ready, false);
+    assert.equal(state.system.negotiation.communication, "in-process-structured-messages");
+    assert.equal(state.system.recovery.networkedProviders, false);
+    assert.equal(state.system.actors.mode, "local-simulation");
+    assert.equal(state.system.actors.externalConnected, 0);
+    assert.equal(state.system.actors.buyer.kind, "deterministic-policy-workflow");
+    assert.equal(state.system.actors.merchant.kind, "simulated-merchant-model");
+    assert.equal(state.system.actors.merchant.connected, false);
+    assert.equal(state.system.actors.provider.kind, "bundled-fixture-provider");
+    assert.equal(state.system.actors.verifiers.kind, "scripted-local-quorum");
+    assert.equal(state.system.actors.rails.agents, false);
+    assert.equal(state.system.actors.communication.externalAgentConversation, false);
+    assert.equal(state.system.actors.externalRequired, 3);
+    assert.ok(state.system.productionBlockers.includes("live_merchant_negotiation"));
+    assert.equal(state.system.networkAccess, false);
+    assert.equal(state.missions[0].principal.actorMode, "simulated");
+    assert.equal(state.missions[0].provider.externalEndpoint, false);
+    assert.ok(state.missions[0].verifiers.every((verifier) => verifier.actorMode === "simulated"));
     assert.equal(state.system.productionReady, false);
   });
 });

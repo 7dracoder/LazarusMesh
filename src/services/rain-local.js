@@ -64,6 +64,9 @@ class LocalRainAdapter {
       quoteId: policy.quoteId || null,
       createdAt,
       mode: "local",
+      synthetic: true,
+      fundsMoved: false,
+      externalEndpoint: false,
       enforcement: {
         amount: "local-policy-exact",
         mcc: "local-policy",
@@ -113,6 +116,9 @@ class LocalRainAdapter {
       checkedAt,
       quoteId: purchaseIntent.quoteId || null,
       mode: "local",
+      synthetic: true,
+      fundsMoved: false,
+      externalEndpoint: false,
     };
   }
 

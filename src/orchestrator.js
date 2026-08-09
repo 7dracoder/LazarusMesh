@@ -140,6 +140,9 @@ class LazarusOrchestrator {
       amountMinor: receipt.amountMinor || receipt.stakeMinor || 0,
       currency: receipt.currency || "USDC",
       timestamp: receipt.timestamp,
+      synthetic: receipt.synthetic === true,
+      fundsMoved: receipt.fundsMoved === true,
+      chainWrite: receipt.chainWrite === true,
       details: receipt,
     });
   }
@@ -213,6 +216,20 @@ class LazarusOrchestrator {
       sessionId: sessionStart.sessionId,
       quoteId: response.quote.quoteId,
     });
+    if (
+      this.negotiation.liveMerchantApi === true &&
+      (
+        this.negotiation.merchantAuthenticated !== true ||
+        this.negotiation.merchantSignedQuotes !== true ||
+        quote.merchantAuthenticated !== true ||
+        quote.merchantSigned !== true
+      )
+    ) {
+      const error = new Error("A live merchant quote must be authenticated and signature-verified before it can be accepted.");
+      error.statusCode = 422;
+      error.code = "MERCHANT_QUOTE_UNTRUSTED";
+      throw error;
+    }
     const decision = evaluateQuote({
       mission,
       policy,
@@ -243,9 +260,11 @@ class LazarusOrchestrator {
     });
     this.addEvent(
       mission,
-      "Bargaining agent",
-      "Binding archive quote accepted",
-      `Atlas accepted $${(quote.amountMinor / 100).toFixed(2)} after ${policy.rounds.length} counteroffers, saving $${(savingsMinor / 100).toFixed(2)} under one-time terms.`,
+      this.negotiation.liveMerchantApi === true ? "Merchant connector" : "Local bargaining policy",
+      this.negotiation.liveMerchantApi === true ? "Binding archive quote accepted" : "Policy-bound demo quote accepted",
+      this.negotiation.liveMerchantApi === true
+        ? `The merchant accepted $${(quote.amountMinor / 100).toFixed(2)} after ${policy.rounds.length} counteroffers, saving $${(savingsMinor / 100).toFixed(2)} under one-time terms.`
+        : `The simulated Atlas merchant model accepted $${(quote.amountMinor / 100).toFixed(2)} after ${policy.rounds.length} deterministic counteroffers, saving $${(savingsMinor / 100).toFixed(2)}. No external seller was contacted.`,
     );
     return quote;
   }
@@ -258,7 +277,13 @@ class LazarusOrchestrator {
         contentRoot: mission.contentRoot,
         payer: mission.principal.id,
       });
-      this.transition(mission, "DISCOVERING", "Candidate discovered and archive price negotiated");
+      this.transition(
+        mission,
+        "DISCOVERING",
+        this.negotiation.liveMerchantApi === true
+          ? "Candidate discovered and archive price negotiated"
+          : "Demo candidate selected and quote simulated",
+      );
       mission.availability = 8;
       mission.budget.spentMinor += receipt.amountMinor;
       mission.payments.unshift({ ...receipt, protocolStatus: requirement.status });
@@ -270,6 +295,9 @@ class LazarusOrchestrator {
         amountMinor: receipt.amountMinor,
         currency: "USDC",
         timestamp: receipt.timestamp,
+        synthetic: receipt.synthetic === true,
+        fundsMoved: receipt.fundsMoved === true,
+        externalEndpoint: receipt.externalEndpoint === true,
       });
       await this.executeNegotiation(mission);
       this.addEvent(
@@ -277,7 +305,7 @@ class LazarusOrchestrator {
         "x402",
         this.x402.mode === "local" ? "Availability handshake simulated" : "Availability intelligence purchased",
         this.x402.mode === "local"
-          ? "The local HTTP 402 demo handshake found Atlas Archive Node. No token was signed or transferred."
+          ? "The local HTTP 402 demo handshake selected the simulated Atlas fixture provider. No external provider was contacted and no token was signed or transferred."
           : "Agent completed an HTTP 402 availability-discovery handshake and found Atlas Archive Node; bargaining happened in a separate quote session.",
       );
       return;
@@ -427,6 +455,9 @@ class LazarusOrchestrator {
         currency: blocked.currency,
         timestamp: blocked.checkedAt,
         reason: blocked.code,
+        synthetic: blocked.synthetic === true,
+        fundsMoved: blocked.fundsMoved === true,
+        externalEndpoint: blocked.externalEndpoint === true,
       });
       this.checkpoint();
 
@@ -468,6 +499,9 @@ class LazarusOrchestrator {
         currency: allowed.currency,
         timestamp: allowed.checkedAt,
         quoteId: quote.quoteId,
+        synthetic: allowed.synthetic === true,
+        fundsMoved: allowed.fundsMoved === true,
+        externalEndpoint: allowed.externalEndpoint === true,
       });
       this.checkpoint();
       mission.budget.spentMinor += allowed.amountMinor;
@@ -501,7 +535,7 @@ class LazarusOrchestrator {
         "Monad",
         this.monad.mode === "local" ? "Demo provider claim recorded" : "Provider claimed bounty",
         this.monad.mode === "local"
-          ? "Atlas Archive Node committed to recovery in the local ledger; no collateral or token moved."
+          ? "The simulated Atlas fixture provider was assigned in the local ledger; no provider endpoint was contacted and no collateral or token moved."
           : "Atlas Archive Node posted collateral and committed to recovery.",
       );
       return;
@@ -512,7 +546,14 @@ class LazarusOrchestrator {
       mission.status = "RECOVERING";
       mission.statusLabel = "Recovering pieces — 8 of 24";
       mission.availability = 34;
-      this.addEvent(mission, "Recovery agent", "First pieces recovered", "8 cryptographically addressed pieces received from the archive provider.");
+      this.addEvent(
+        mission,
+        this.recovery.mode === "local" ? "Local recovery fixture" : "Recovery provider",
+        "First pieces recovered",
+        this.recovery.mode === "local"
+          ? "8 cryptographically addressed pieces loaded from the bundled CC0 fixture; no external provider transferred data."
+          : "8 cryptographically addressed pieces received from the recovery provider.",
+      );
       return;
     }
 
@@ -520,7 +561,14 @@ class LazarusOrchestrator {
       mission.pieces = await this.recovery.recoverThrough(mission.id, 16);
       mission.statusLabel = "Recovering pieces — 16 of 24";
       mission.availability = 58;
-      this.addEvent(mission, "Recovery agent", "Recovery passed halfway", "16 of 24 pieces received; each piece hash matches the manifest.");
+      this.addEvent(
+        mission,
+        this.recovery.mode === "local" ? "Local recovery fixture" : "Recovery provider",
+        "Recovery passed halfway",
+        this.recovery.mode === "local"
+          ? "16 of 24 bundled fixture pieces loaded; each piece hash matches the manifest."
+          : "16 of 24 pieces received; each piece hash matches the manifest.",
+      );
       return;
     }
 
@@ -532,7 +580,12 @@ class LazarusOrchestrator {
       mission.verifiers[0].state = "passed";
       mission.verifiers[1].state = "passed";
       mission.audit.quorum = "2/2";
-      this.addEvent(mission, "Verifier mesh", "Random challenges passed", "North and East verifiers independently validated all challenged pieces.");
+      this.addEvent(
+        mission,
+        "Local verifier quorum",
+        "Scripted verification passed",
+        "North and East are local verifier roles in this demo; they checked the fixture pieces against the declared hashes without contacting independent services.",
+      );
       return;
     }
 
@@ -575,15 +628,19 @@ class LazarusOrchestrator {
       mission.budget.releasedMinor = release.totalReleasedMinor;
       mission.seeders = 2;
       mission.provider.state = "reseeding";
-      this.transition(mission, "RESEEDED", "Restored to two independent seeders");
+      this.transition(
+        mission,
+        "RESEEDED",
+        this.recovery.mode === "local" ? "Demo modeled two local replicas" : "Restored to two independent seeders",
+      );
       mission.availability = 100;
       this.addChainTransaction(mission, release);
       this.addEvent(
         mission,
         "Recovery network",
-        "Artifact resurrected",
+        this.recovery.mode === "local" ? "Demo replicas modeled" : "Artifact resurrected",
         this.monad.mode === "local"
-          ? "Availability changed from zero to two complete seeders; the local ledger recorded the retention milestone."
+          ? "The demo modeled two complete replicas and recorded the retention milestone locally; no external seeding network was contacted."
           : "Availability changed from zero to two complete seeders; retention tranche released.",
       );
       return;
@@ -600,14 +657,21 @@ class LazarusOrchestrator {
       if (mission.rainCard?.state === "expiry_scheduled") {
         this.addEvent(mission, "Rain", "Scoped card expiration scheduled", "Application payment authority was disabled; the Rain sandbox card remains bounded by its short remote expiry because the public sandbox exposes no cancel endpoint.");
       } else {
-        this.addEvent(mission, "Rain", "Scoped card retired", "Payment authority removed immediately after mission completion.");
+        this.addEvent(
+          mission,
+          "Rain",
+          this.rain.mode === "local" ? "Simulated card retired" : "Scoped card retired",
+          this.rain.mode === "local"
+            ? "The local card-policy simulation removed its demo authority; no real card existed."
+            : "Payment authority removed immediately after mission completion.",
+        );
       }
       this.addEvent(
         mission,
         "Lazarus Mesh",
         "Mission completed",
         this.monad.mode === "local"
-          ? "Dead data is live again. Demo allocations, proofs, and recovery receipts reconciled with $0.00 charged."
+          ? "The bundled-fixture recovery simulation completed. Demo allocations, scripted proofs, and local receipts reconciled with $0.00 charged."
           : "Dead data is live again. Payment, proof, and recovery receipts reconciled.",
       );
     }

@@ -62,6 +62,13 @@ class LocalNegotiationAdapter {
     this.sessionByMission = new Map();
     this.idempotentResponses = new Map();
     this.mode = 'local-negotiation';
+    this.liveMerchantApi = false;
+    this.merchantAuthenticated = false;
+    this.merchantSignedQuotes = false;
+    this.merchant = Object.freeze({
+      merchantId: ATLAS.merchantId,
+      merchantName: ATLAS.merchantName,
+    });
   }
 
   reset() {
@@ -108,6 +115,8 @@ class LocalNegotiationAdapter {
       currency: 'USD',
       terms: { ...DEFAULT_TERMS },
       binding: false,
+      source: 'simulated',
+      merchantAuthenticated: false,
       issuedAt: createdAt,
     };
     const session = {
@@ -127,6 +136,8 @@ class LocalNegotiationAdapter {
       completedAt: null,
       idempotencyKey: idempotencyKey || null,
       mode: this.mode,
+      source: 'simulated',
+      externalEndpoint: false,
     };
     this.sessions.set(sessionId, session);
     this.sessionByMission.set(missionId, sessionId);
@@ -183,6 +194,9 @@ class LocalNegotiationAdapter {
         currency: 'USD',
         terms: { ...DEFAULT_TERMS },
         binding: true,
+        source: 'simulated',
+        merchantAuthenticated: false,
+        merchantSigned: false,
         issuedAt,
         expiresAt,
       };
@@ -222,6 +236,7 @@ class LocalNegotiationAdapter {
       session.currentSellerAmountMinor = sellerAmount;
       session.status = 'countering';
     }
+    seller.source = 'simulated-merchant-model';
 
     const round = {
       roundId: localId('round', sessionId, roundNumber, amountMinor, timestamp),
@@ -231,6 +246,7 @@ class LocalNegotiationAdapter {
         amountMinor,
         reasonCode: roundNumber === 1 ? 'TARGET_PRICE' : 'BEST_WITHIN_POLICY',
         terms: { ...DEFAULT_TERMS },
+        source: 'local-policy',
         timestamp,
       },
       seller,

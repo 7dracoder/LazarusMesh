@@ -22,6 +22,9 @@ test("Rain adapter authorizes bounded purchase and blocks oversized purchase", (
     expiresAt: "2026-08-09T13:00:00.000Z",
     purpose: "archival_egress",
   });
+  assert.equal(card.synthetic, true);
+  assert.equal(card.fundsMoved, false);
+  assert.equal(card.externalEndpoint, false);
   const blocked = rain.authorizePurchase(card.cardId, {
     merchantId: "other",
     merchantName: "Other",
@@ -30,6 +33,9 @@ test("Rain adapter authorizes bounded purchase and blocks oversized purchase", (
   });
   assert.equal(blocked.authorized, false);
   assert.equal(blocked.code, "AMOUNT_LIMIT_EXCEEDED");
+  assert.equal(blocked.synthetic, true);
+  assert.equal(blocked.fundsMoved, false);
+  assert.equal(blocked.externalEndpoint, false);
 
   const wrongMerchant = rain.authorizePurchase(card.cardId, {
     merchantId: "other",
@@ -47,6 +53,9 @@ test("Rain adapter authorizes bounded purchase and blocks oversized purchase", (
     amountMinor: 1200,
   });
   assert.equal(allowed.authorized, true);
+  assert.equal(allowed.synthetic, true);
+  assert.equal(allowed.fundsMoved, false);
+  assert.equal(allowed.externalEndpoint, false);
   assert.equal(rain.retireCard(card.cardId).state, "retired");
 });
 
@@ -100,7 +109,10 @@ test("Rain card scopes cannot be widened by mutating caller-owned arrays", () =>
 
 test("Monad adapter releases cumulative 70/90/100 percent tranches exactly once", () => {
   const monad = new LocalMonadAdapter({ clock });
-  monad.createBounty({ missionId: "m1", sponsor: "s", contentRoot: "root", rewardMinor: 500, stakeMinor: 200 });
+  const receipt = monad.createBounty({ missionId: "m1", sponsor: "s", contentRoot: "root", rewardMinor: 500, stakeMinor: 200 });
+  assert.equal(receipt.synthetic, true);
+  assert.equal(receipt.fundsMoved, false);
+  assert.equal(receipt.chainWrite, false);
   monad.claimBounty("m1", "provider");
   monad.recordAttestations("m1", [
     { verifierId: "v1", result: "pass" },
@@ -159,7 +171,10 @@ test("x402 adapter returns 402 requirement and settled availability receipt", ()
   const receipt = x402.settleAvailability({ missionId: "m", contentRoot: "root", payer: "p" });
   assert.equal(receipt.status, "settled");
   assert.equal(receipt.network, "eip155:10143");
-  assert.equal(receipt.paymentResponse.candidateProviders, 2);
+  assert.equal(receipt.paymentResponse.candidateProviders, 1);
+  assert.equal(receipt.synthetic, true);
+  assert.equal(receipt.fundsMoved, false);
+  assert.equal(receipt.externalEndpoint, false);
   assert.deepEqual(
     x402.settleAvailability({ missionId: "m", contentRoot: "root", payer: "p" }),
     receipt,
@@ -176,6 +191,8 @@ test("recovery adapter reconstructs exact fixture bytes", () => {
   const recovery = new LocalRecoveryAdapter({
     fixturePath: path.join(__dirname, "..", "fixtures", "cc0-rainfall-dataset", "rainfall-sample.json"),
   });
+  assert.equal(recovery.mode, "local");
+  assert.equal(recovery.networkedProviders, false);
   const manifest = recovery.buildManifest(24);
   recovery.start("m", manifest);
   recovery.recoverThrough("m", 24);

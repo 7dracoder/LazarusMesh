@@ -765,7 +765,7 @@ html[data-theme="light"] .moon-icon {
 
 .readiness-items {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 8px;
   min-width: 0;
 }
@@ -2134,6 +2134,15 @@ html[data-theme="light"] .primary-button {
   font-size: 9px;
 }
 
+.deal-boundary-note {
+  margin: 9px 0 0;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 8px;
+  line-height: 1.5;
+}
+
 .deal-section-heading span {
   color: var(--faint);
   font-family: var(--mono);
@@ -2944,7 +2953,7 @@ button.is-busy svg {
   .readiness-strip { padding: 13px; }
   .readiness-heading > div { align-items: flex-start; flex-direction: column; gap: 3px; }
   .readiness-items {
-    grid-template-columns: repeat(3, minmax(190px, 1fr));
+    grid-template-columns: repeat(4, minmax(190px, 1fr));
     padding-bottom: 4px;
     overflow-x: auto;
     scrollbar-color: var(--border-strong) transparent;

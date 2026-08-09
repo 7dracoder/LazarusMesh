@@ -199,6 +199,16 @@ function createApplication({
   const readiness = monadReadiness(env);
   const monadProbeConfig = monadNetworkConfig(env);
   const runMonadProbe = adapterOverrides.monadProbe || (() => probeMonadNetwork(monadProbeConfig));
+  const liveMerchantApi = negotiation.liveMerchantApi === true;
+  const merchantAuthenticated = liveMerchantApi && negotiation.merchantAuthenticated === true;
+  const merchantSignedQuotes = liveMerchantApi && negotiation.merchantSignedQuotes === true;
+  const merchantReady = liveMerchantApi && merchantAuthenticated && merchantSignedQuotes;
+  const networkedProviders = recovery.networkedProviders === true;
+  const externalVerifierNetwork = false;
+  const merchantProfile = negotiation.merchant || {
+    merchantId: "merchant_atlas_archive",
+    merchantName: "Atlas Archive Cloud",
+  };
   const system = {
     mode: adapterMode === "rain-sandbox" ? "hybrid-sandbox" : "local",
     rain: {
@@ -223,12 +233,79 @@ function createApplication({
     },
     negotiation: {
       mode: negotiation.mode || "local-negotiation",
-      liveMerchantApi: false,
+      liveMerchantApi,
+      merchantAuthenticated,
+      merchantSignedQuotes,
+      ready: merchantReady,
+      communication: merchantReady
+        ? "authenticated-https"
+        : liveMerchantApi
+          ? "external-https-untrusted"
+          : "in-process-structured-messages",
     },
     recovery: {
-      mode: "verified-local-fixture",
-      networkedProviders: false,
+      mode: networkedProviders ? "external-provider-api" : "verified-local-fixture",
+      networkedProviders,
       persistentReseeding: false,
+    },
+    actors: {
+      mode: liveMerchantApi || networkedProviders ? "hybrid" : "local-simulation",
+      externalConnected: [merchantReady, networkedProviders, externalVerifierNetwork].filter(Boolean).length,
+      externalRequired: 3,
+      buyer: {
+        id: "lazarus_buyer_policy",
+        name: "Lazarus buyer policy",
+        role: "buyer-orchestrator",
+        kind: "deterministic-policy-workflow",
+        simulated: true,
+        connected: true,
+        externalEndpoint: false,
+        generativeChat: false,
+      },
+      merchant: {
+        id: merchantProfile.merchantId,
+        name: merchantProfile.merchantName,
+        role: "seller",
+        kind: liveMerchantApi ? "external-merchant-api" : "simulated-merchant-model",
+        simulated: !liveMerchantApi,
+        connected: liveMerchantApi,
+        ready: merchantReady,
+        authenticated: merchantAuthenticated,
+        signedQuotes: merchantSignedQuotes,
+        externalEndpoint: liveMerchantApi,
+      },
+      provider: {
+        id: "provider_atlas_archive",
+        name: "Atlas Archive Node",
+        role: "fulfillment-provider",
+        kind: networkedProviders ? "external-provider-api" : "bundled-fixture-provider",
+        simulated: !networkedProviders,
+        connected: networkedProviders,
+        externalEndpoint: networkedProviders,
+      },
+      verifiers: {
+        names: ["North Verifier", "East Verifier", "West Verifier"],
+        role: "verification-quorum",
+        kind: externalVerifierNetwork ? "external-verifier-network" : "scripted-local-quorum",
+        simulated: !externalVerifierNetwork,
+        connected: externalVerifierNetwork,
+        externalEndpoint: externalVerifierNetwork,
+      },
+      rails: {
+        names: ["Rain", "Monad", "x402"],
+        role: "payment-and-coordination-infrastructure",
+        agents: false,
+      },
+      communication: {
+        transport: merchantReady
+          ? "authenticated-https"
+          : liveMerchantApi
+            ? "external-https-untrusted"
+            : "in-process-method-calls",
+        structuredMessages: true,
+        externalAgentConversation: merchantReady,
+        freeFormChat: false,
+      },
     },
     deployment: {
       runtime,
@@ -248,8 +325,8 @@ function createApplication({
       ...(!readiness.signerConfigured ? ["monad_signer"] : []),
       ...(!readiness.contractConfigured ? ["monad_bounty_contract"] : []),
       ...(!readiness.payToConfigured ? ["x402_pay_to_address"] : []),
-      "live_merchant_negotiation",
-      "network_recovery_provider",
+      ...(!merchantReady ? ["live_merchant_negotiation"] : []),
+      ...(!networkedProviders ? ["network_recovery_provider"] : []),
       "persistent_reseeding",
     ],
     orchestrator: { status: "ready" },
@@ -264,7 +341,7 @@ function createApplication({
       externalPaymentRequests: adapterMode === "rain-sandbox",
     },
     verifiers: { status: "local quorum" },
-    networkAccess: adapterMode === "rain-sandbox" || (
+    networkAccess: adapterMode === "rain-sandbox" || liveMerchantApi || networkedProviders || (
       readiness.rpcConfigured && readiness.facilitatorConfigured
     ),
   };
@@ -336,8 +413,8 @@ function createApplication({
             liveSettlementEnabled: false,
             facilitatorConfigured: readiness.facilitatorConfigured,
           },
-          negotiation: { mode: negotiation.mode || "local-negotiation" },
-          recovery: { mode: "real-bytes-local" },
+          negotiation: { ...system.negotiation },
+          recovery: { ...system.recovery },
         },
       });
     }
@@ -585,6 +662,7 @@ function createApplication({
     orchestrator,
     store,
     stateFactory,
+    system,
     adapters: { rain, monad, x402, negotiation, recovery },
   };
 }

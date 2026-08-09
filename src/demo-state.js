@@ -44,18 +44,21 @@ function createMission({
   return {
     id,
     title,
-    objective: "Recover a known CC0 dataset, verify every piece, and restore at least two independent seeders.",
+    objective: "Reconstruct a known CC0 fixture, verify every piece, and model two complete replicas.",
     status: "DEAD",
-    statusLabel: "Dead — no complete peers",
+    statusLabel: "Fixture unavailable — no modeled replica",
     availability: 0,
     stepIndex: 0,
     running: false,
     createdAt: new Date().toISOString(),
     completedAt: null,
     principal: {
-      id: "principal_rain_labs",
-      name: "Rain Labs Research",
-      verification: "Local verified demo business",
+      id: "principal_lazarus_demo",
+      name: "Lazarus Demo Sponsor",
+      verification: "Simulated local principal",
+      actorMode: "simulated",
+      connected: false,
+      externalEndpoint: false,
     },
     provider: {
       id: "provider_atlas_archive",
@@ -63,6 +66,9 @@ function createMission({
       state: "unassigned",
       stakeMinor: 200,
       reputation: 92,
+      actorMode: "simulated",
+      connected: false,
+      externalEndpoint: false,
     },
     rightsEvidence: true,
     deadline: expiresAt,
@@ -97,6 +103,9 @@ function createMission({
     },
     negotiation: {
       status: "not_started",
+      executionMode: "local-simulation",
+      merchantAuthenticated: false,
+      merchantSignedQuote: false,
       sessionId: null,
       targetAmountMinor: 900,
       maximumAmountMinor: 1200,
@@ -120,9 +129,9 @@ function createMission({
     payments: [],
     transactions: [],
     verifiers: [
-      { id: "verifier_north", name: "North Verifier", state: "pending", reputation: 97 },
-      { id: "verifier_east", name: "East Verifier", state: "pending", reputation: 94 },
-      { id: "verifier_west", name: "West Verifier", state: "pending", reputation: 91 },
+      { id: "verifier_north", name: "North Verifier", state: "pending", reputation: 97, actorMode: "simulated", connected: false, externalEndpoint: false },
+      { id: "verifier_east", name: "East Verifier", state: "pending", reputation: 94, actorMode: "simulated", connected: false, externalEndpoint: false },
+      { id: "verifier_west", name: "West Verifier", state: "pending", reputation: 91, actorMode: "simulated", connected: false, externalEndpoint: false },
     ],
     audit: {
       expectedContentSha256: manifest.contentSha256,
@@ -132,9 +141,9 @@ function createMission({
     },
     events: [
       makeEvent({
-        source: "Recovery network",
-        title: "Artifact unavailable",
-        description: "Manifest valid; zero complete peers detected. Recovery mission ready.",
+        source: "Local recovery fixture",
+        title: "Demo artifact marked unavailable",
+        description: "Manifest valid; the demo begins with zero modeled replicas. No peer network was scanned.",
         status: "warning",
       }),
     ],
@@ -144,7 +153,7 @@ function createMission({
 function createDefaultState(recovery, { system = {} } = {}) {
   const mission = createMission({ recovery });
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     activeMissionId: mission.id,
     system: {
       name: "Lazarus Mesh",

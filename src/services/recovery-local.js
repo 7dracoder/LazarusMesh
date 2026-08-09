@@ -31,6 +31,8 @@ function merkleRoot(pieceHashes) {
 
 class LocalRecoveryAdapter {
   constructor({ fixturePath } = {}) {
+    this.mode = "local";
+    this.networkedProviders = false;
     this.fixturePath = fixturePath || path.join(
       __dirname,
       "..",

@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta
       name="description"
-      content="Lazarus Mesh autonomous digital artifact recovery command center"
+      content="Lazarus Mesh deterministic digital artifact recovery simulation"
     />
     <meta name="color-scheme" content="dark light" />
     <title>Lazarus Mesh | Recovery Command</title>
@@ -144,6 +144,10 @@
               <span class="readiness-mark" aria-hidden="true"></span>
               <div><strong>x402</strong><span>Checking configuration</span></div>
             </article>
+            <article class="readiness-item" data-tone="pending">
+              <span class="readiness-mark" aria-hidden="true"></span>
+              <div><strong>Marketplace</strong><span>Checking actor connections</span></div>
+            </article>
           </div>
         </section>
 
@@ -155,7 +159,7 @@
           <h1>Bring lost knowledge back online.</h1>
           <p>
             Create a mission from a known content root, grant a bounded budget, and
-            watch autonomous agents recover, verify, and reseed it.
+            watch the local orchestrator simulate discovery, bargaining, verification, and replication.
           </p>
           <button class="primary-button" data-open-mission type="button">
             Create your first mission
@@ -227,21 +231,21 @@
           <section class="lifecycle panel" aria-labelledby="lifecycle-heading">
             <div class="panel-heading lifecycle-heading-row">
               <div>
-                <p class="eyebrow">Autonomous mission lifecycle</p>
+                <p class="eyebrow">Deterministic mission workflow</p>
                 <h2 id="lifecycle-heading">Resurrection sequence</h2>
               </div>
               <span class="live-agent-chip">
-                <i aria-hidden="true"></i><span id="agent-state">Agent awaiting command</span>
+                <i aria-hidden="true"></i><span id="agent-state">Workflow awaiting command</span>
               </span>
             </div>
             <ol class="stage-track" id="stage-track">
               <li data-stage="DEAD">
                 <div class="stage-node"><span>01</span></div>
-                <div class="stage-copy"><strong>Dead</strong><small>0 seeders</small></div>
+                <div class="stage-copy"><strong>Unavailable</strong><small>0 demo replicas</small></div>
               </li>
               <li data-stage="DISCOVERING">
                 <div class="stage-node"><span>02</span></div>
-                <div class="stage-copy"><strong>Discovering</strong><small>Agent scan</small></div>
+                <div class="stage-copy"><strong>Discovering</strong><small>Local candidate</small></div>
               </li>
               <li data-stage="RECOVERING">
                 <div class="stage-node"><span>03</span></div>
@@ -253,7 +257,7 @@
               </li>
               <li data-stage="RESEEDED">
                 <div class="stage-node"><span>05</span></div>
-                <div class="stage-copy"><strong>Reseeded</strong><small>Mesh alive</small></div>
+                <div class="stage-copy"><strong>Replicated</strong><small>Demo modeled</small></div>
               </li>
             </ol>
           </section>
@@ -284,7 +288,7 @@
                 <svg viewBox="0 0 24 24"><circle cx="6" cy="12" r="2.5"></circle><circle cx="18" cy="6" r="2.5"></circle><circle cx="18" cy="18" r="2.5"></circle><path d="m8.2 10.8 7.6-3.6M8.2 13.2l7.6 3.6"></path></svg>
               </div>
               <div>
-                <p>Active seeders</p>
+                <p id="seeders-label">Demo replicas</p>
                 <strong id="seeders-value">0</strong>
               </div>
               <span class="metric-detail" id="seeders-detail">Artifact offline</span>
@@ -367,9 +371,9 @@
                     <svg viewBox="0 0 36 36"><path d="M18 4 31 18 18 32 5 18 18 4Z"></path><path d="M18 10.5 25 18l-7 7.5-7-7.5 7-7.5Z"></path></svg>
                   </div>
                   <div class="rail-main">
-                    <div class="rail-title-row"><strong>Monad</strong><span id="monad-state">Escrow ready</span></div>
-                    <p id="monad-description">Onchain bounty, collateral, and finality</p>
-                    <div class="rail-meta"><span id="monad-amount">$0.00 escrowed</span><code id="monad-reference">Localnet</code></div>
+                    <div class="rail-title-row"><strong>Monad</strong><span id="monad-state">Demo ledger ready</span></div>
+                    <p id="monad-description">Local bounty and milestone accounting</p>
+                    <div class="rail-meta"><span id="monad-amount">$0.00 moved</span><code id="monad-reference">Local simulation</code></div>
                   </div>
                 </article>
 
@@ -377,8 +381,8 @@
                   <div class="rail-logo x402-logo" aria-hidden="true"><span>402</span></div>
                   <div class="rail-main">
                     <div class="rail-title-row"><strong>x402</strong><span id="x402-state">Awaiting discovery</span></div>
-                    <p id="x402-description">Machine-native discovery micropayments</p>
-                    <div class="rail-meta"><span id="x402-amount">$0.00 settled</span><code id="x402-reference">No receipt</code></div>
+                    <p id="x402-description">Local machine-payment handshake simulation</p>
+                    <div class="rail-meta"><span id="x402-amount">$0.00 moved</span><code id="x402-reference">No receipt</code></div>
                   </div>
                 </article>
               </div>
@@ -387,10 +391,10 @@
             <section class="timeline-panel panel" aria-labelledby="timeline-heading">
               <div class="panel-heading panel-heading-split">
                 <div>
-                  <p class="eyebrow">Live agent activity</p>
+                  <p class="eyebrow">Mission activity</p>
                   <h2 id="timeline-heading">Recovery timeline</h2>
                 </div>
-                <span class="stream-indicator"><i aria-hidden="true"></i>Event stream</span>
+                <span class="stream-indicator"><i aria-hidden="true"></i>Runtime event log</span>
               </div>
               <div class="timeline" id="timeline" aria-live="polite" aria-relevant="additions text">
                 <div class="timeline-empty">
@@ -418,7 +422,7 @@
           </div>
 
           <footer class="app-footer">
-            <span id="footer-primary">Auditable recovery with bounded agent authority.</span>
+            <span id="footer-primary">Deterministic recovery demo with bounded policy authority.</span>
             <span id="footer-runtime">Loading execution environment…</span>
           </footer>
         </div>
